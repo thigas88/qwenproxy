@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.0.0...v1.1.0) (2026-06-03)
+
+
+### Features
+
+* add bin entry for npx execution ([413c2cc](https://github.com/pedrofariasx/qwenproxy/commit/413c2ccfae50dfd4252acc38374460bb6b88791a))
+
 # 1.0.0 (2026-06-03)
 
 
