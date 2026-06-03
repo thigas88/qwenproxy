@@ -318,12 +318,23 @@ export async function fetchQwenModels(accountId?: string): Promise<any[]> {
   return [];
 }
 
+export interface QwenFileEntry {
+  type: string;
+  file: any;
+  id: string;
+  url: string;
+  name: string;
+  [key: string]: any;
+}
+
 export async function createQwenStream(
   prompt: string,
   enableThinking: boolean,
   modelId: string,
   forcedParentId?: string | null,
-  accountId?: string
+  accountId?: string,
+  files?: QwenFileEntry[],
+  pendingMultimodal?: Array<Array<{ type: string; text?: string; image_url?: { url: string }; video_url?: { url: string }; audio_url?: { url: string }; file_url?: { url: string } }>>
 ): Promise<{ stream: ReadableStream, headers: Record<string, string>, uiSessionId: string, controller: AbortController, accountId: string }> {
   let chatEntry: WarmPoolEntry;
   try {
@@ -339,6 +350,30 @@ export async function createQwenStream(
   const chatId = chatEntry.chatId;
   const chatHeaders = chatEntry.headers;
   const actualParentId: string | null = null;
+
+  // Process pending multimodal uploads using warm pool headers (no extra Playwright roundtrip)
+  let resolvedFiles = files || [];
+  if (pendingMultimodal && pendingMultimodal.length > 0 && resolvedFiles.length === 0) {
+    try {
+      const { processImagesForQwen } = await import('../routes/upload.ts');
+      const uploadHeaders: Record<string, string> = {
+        cookie: chatHeaders['cookie'] || '',
+        'user-agent': chatHeaders['user-agent'] || '',
+        'bx-ua': chatHeaders['bx-ua'] || '',
+        'bx-umidtoken': chatHeaders['bx-umidtoken'] || '',
+        'bx-v': chatHeaders['bx-v'] || '',
+      };
+      // Process all multimodal parts in parallel
+      const results = await Promise.all(
+        pendingMultimodal.map(parts => processImagesForQwen(parts, uploadHeaders))
+      );
+      for (const r of results) {
+        resolvedFiles.push(...r.files);
+      }
+    } catch (err: any) {
+      console.error('[Qwen] Failed to process multimodal uploads:', err.message);
+    }
+  }
 
   const timestamp = Math.floor(Date.now() / 1000);
   const fid = uuidv4();
@@ -360,7 +395,7 @@ export async function createQwenStream(
         role: 'user',
         content: prompt,
         user_action: 'chat',
-        files: [],
+        files: resolvedFiles,
         timestamp: timestamp,
         models: [model],
         chat_type: 't2t',

@@ -103,7 +103,7 @@ export async function getCookies(accountId?: string): Promise<string> {
   return cookieStr;
 }
 
-export async function getBasicHeaders(accountId?: string): Promise<{ cookie: string, userAgent: string, bxV: string }> {
+export async function getBasicHeaders(accountId?: string): Promise<{ cookie: string, userAgent: string, bxV: string, bxUa?: string, bxUmidtoken?: string }> {
   if (process.env.TEST_MOCK_PLAYWRIGHT) return { cookie: 'token=mock', userAgent: 'mock', bxV: '2.5.36' };
   
   let page = accountId ? accountPages.get(accountId) : activePage;
@@ -124,8 +124,10 @@ export async function getBasicHeaders(accountId?: string): Promise<{ cookie: str
   const cacheKey = accountId || 'global';
   const cache = getAccountHeaderCache(cacheKey);
   const bxV = cache.currentHeaders['bx-v'] || '2.5.36';
+  const bxUa = cache.currentHeaders['bx-ua'];
+  const bxUmidtoken = cache.currentHeaders['bx-umidtoken'];
   
-  return { cookie, userAgent, bxV };
+  return { cookie, userAgent, bxV, bxUa, bxUmidtoken };
 }
 
 export async function initPlaywright(headless = true, browserType: BrowserType = 'chromium') {

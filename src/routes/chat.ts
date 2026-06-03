@@ -113,12 +113,36 @@ export async function chatCompletions(c: Context) {
     let prompt = '';
     const messages = body.messages || [];
     let systemPrompt = '';
-    
+    const pendingMultimodal: Array<Array<{ type: string; text?: string; image_url?: { url: string }; video_url?: { url: string }; audio_url?: { url: string }; file_url?: { url: string } }>> = [];
+
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       let contentStr = '';
       if (Array.isArray(msg.content)) {
-        contentStr = msg.content.map((c: any) => c.text || JSON.stringify(c)).join('\n');
+        // Handle multimodal content (text + images + videos + audio + files)
+        const multimodalParts = msg.content.filter(
+          (p: any) =>
+            (p.type === "image_url" && p.image_url?.url) ||
+            (p.type === "video_url" && p.video_url?.url) ||
+            (p.type === "audio_url" && p.audio_url?.url) ||
+            (p.type === "file_url" && p.file_url?.url),
+        );
+
+        if (multimodalParts.length > 0) {
+          // Defer processing to after account selection to reuse cached headers
+          pendingMultimodal.push(multimodalParts);
+          // Extract text parts for prompt building
+          contentStr = msg.content
+            .filter((p: any) => p.type === "text")
+            .map((p: any) => p.text)
+            .join("\n");
+        } else {
+          // No multimodal parts, just extract text
+          contentStr = msg.content
+            .filter((p: any) => p.type === "text")
+            .map((p: any) => p.text)
+            .join("\n");
+        }
       } else if (typeof msg.content === 'object' && msg.content !== null) {
         contentStr = JSON.stringify(msg.content);
       } else {
@@ -250,7 +274,9 @@ export async function chatCompletions(c: Context) {
             isThinkingModel,
             body.model,
             null, // Always force new chat for concurrency isolation
-            accountId === 'global' ? undefined : accountId
+            accountId === 'global' ? undefined : accountId,
+            undefined,
+            pendingMultimodal.length > 0 ? pendingMultimodal : undefined
           );
             stream = result.stream;
             uiSessionId = result.uiSessionId;

@@ -6,6 +6,7 @@ import { cache } from '../cache/memory-cache.js'
 import { Watchdog } from '../core/watchdog.js'
 import { app as modelsApp } from './models.js'
 import { chatCompletions, chatCompletionsStop } from '../routes/chat.js'
+import { uploadFile } from '../routes/upload.js'
 
 const app = new Hono()
 
@@ -39,6 +40,7 @@ app.use('/v1/*', async (c, next) => {
 app.route('', modelsApp)
 app.post('/v1/chat/completions', chatCompletions)
 app.post('/v1/chat/completions/stop', chatCompletionsStop)
+app.post('/v1/upload', uploadFile)
 
 app.get('/health', async (c) => {
   const status = await watchdog?.getStatus()
