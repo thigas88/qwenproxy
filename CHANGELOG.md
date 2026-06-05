@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/pedrofariasx/qwenproxy/compare/v1.2.0...v1.2.1) (2026-06-05)
+
+
+### Performance Improvements
+
+* improve long-context reliability and warm pool latency ([6502bf2](https://github.com/pedrofariasx/qwenproxy/commit/6502bf26ea49880de1f7e22542db7b570bf1c34a))
+
 # [1.2.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.1.0...v1.2.0) (2026-06-04)
 
 
