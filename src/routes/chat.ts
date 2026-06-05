@@ -25,10 +25,6 @@ import { getNextAccount, getNextAvailableAccount, markAccountRateLimited, getAcc
 import { registerStream, removeStream, getStream } from '../core/stream-registry.ts';
 import { metrics } from '../core/metrics.js'
 
-export function cleanupAllAccountMutexes(): void {
-  // No-op - kept for backward compatibility
-}
-
 export interface DeltaResult {
   delta: string;
   matchedContent: string;

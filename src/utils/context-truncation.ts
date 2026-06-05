@@ -1,8 +1,3 @@
-export interface TruncatedMessage {
-  role: string;
-  content: string;
-}
-
 export function estimateTokenCount(text: string): number {
   // Divisor conservador (2.5) para evitar estouro silencioso do context window.
   // Tokenizers modernos (como o do Qwen) usam ~1.5 a 2.5 caracteres por token

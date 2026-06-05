@@ -276,14 +276,6 @@ export class StreamingToolParser {
     return this.insideTool;
   }
 
-  /**
-   * Get any lead-in text that was captured before tool calls.
-   * Useful for fallback content when tool calls fail to parse.
-   */
-  getPendingLeadIn(): string {
-    return this.pendingLeadIn;
-  }
-
   // ─── Internal Methods ──────────────────────────────────────────────────────
 
   private processToolContent(content: string, result: ParserResult): void {

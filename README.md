@@ -39,7 +39,7 @@ graph TD
     Playwright --> Browser2[Browser - Conta 2]
     Playwright --> BrowserN[Browser - Conta N]
     Handler --> QwenAPI[chat.qwen.ai]
-    Handler --> Tools[Tool Executor]
+    Handler --> Tools[Tool Parser]
 
     subgraph "Persistência"
         Accounts
@@ -233,24 +233,14 @@ qwenproxy/
 │   │   ├── model-registry.ts    # Registro de modelos e context windows
 │   │   ├── stream-registry.ts   # Tracking de streams ativos
 │   │   └── watchdog.ts          # Health monitoring
-│   ├── linter/
-│   │   ├── bar.ts               # Facade
-│   │   ├── extraction-engine.ts # Extraction engine
-│   │   ├── foo.ts               # Exports
-│   │   ├── index.ts             # Main public API
-│   │   ├── repair-normalize.ts  # Repair and normalize
-│   │   ├── safety-gate.ts       # Safety gate
-│   │   ├── streaming-state-machine.ts # Streaming state machine
-│   │   ├── structural-parser.ts # Structural parser
-│   │   └── types.ts             # Types
 │   ├── routes/
-│   │   └── chat.ts              # Handler /v1/chat/completions
+│   │   ├── chat.ts              # Handler /v1/chat/completions
+│   │   └── upload.ts            # Handler /v1/upload (multimodal)
 │   ├── services/
 │   │   ├── playwright.ts        # Automação de navegador
 │   │   └── qwen.ts              # Integração com API do Qwen
 │   ├── tests/                   # Testes automatizados
 │   ├── tools/
-│   │   ├── executor.ts          # Execução de ferramentas
 │   │   ├── parser.ts            # Parser de <tool_call> tags
 │   │   ├── registry.ts          # Registro de tools
 │   │   ├── schema.ts            # Validação JSON Schema

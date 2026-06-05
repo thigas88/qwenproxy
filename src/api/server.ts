@@ -111,8 +111,6 @@ export async function startServer(): Promise<void> {
     await cache.close()
     const { closePlaywright } = await import('../services/playwright.js')
     await closePlaywright()
-    const { cleanupAllAccountMutexes } = await import('../routes/chat.js')
-    cleanupAllAccountMutexes()
     const { closeDatabase } = await import('../core/database.ts')
     closeDatabase()
     server?.close()
