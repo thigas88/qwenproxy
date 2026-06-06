@@ -1,3 +1,11 @@
+## [1.2.3](https://github.com/pedrofariasx/qwenproxy/compare/v1.2.2...v1.2.3) (2026-06-06)
+
+
+### Bug Fixes
+
+* handle double-escaped quotes and unclosed strings in tool call parser ([56f091f](https://github.com/pedrofariasx/qwenproxy/commit/56f091f9ef0844ff5443dcabd2bb95d158fb89a5))
+* widen truncateMessages content type to accept object payloads ([de6f706](https://github.com/pedrofariasx/qwenproxy/commit/de6f7060cb5b3be2220260725c19e4d483ec648c))
+
 ## [1.2.2](https://github.com/pedrofariasx/qwenproxy/compare/v1.2.1...v1.2.2) (2026-06-05)
 
 
