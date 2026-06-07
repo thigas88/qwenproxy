@@ -1,3 +1,15 @@
+# [1.3.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.2.3...v1.3.0) (2026-06-07)
+
+
+### Bug Fixes
+
+* **model-registry:** replace hardcoded models with live API data ([95e7f18](https://github.com/pedrofariasx/qwenproxy/commit/95e7f1859a1b70a34f180ae905b661a5d962771f))
+
+
+### Features
+
+* model-aware token estimation, dynamic timeouts, and robust JSON/tool-call parsing ([2d41378](https://github.com/pedrofariasx/qwenproxy/commit/2d41378edad60d612b1dfb08f16bf2e95eeb5064))
+
 ## [1.2.3](https://github.com/pedrofariasx/qwenproxy/compare/v1.2.2...v1.2.3) (2026-06-06)
 
 
