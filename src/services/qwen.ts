@@ -1,4 +1,4 @@
-import { getQwenHeaders, getBasicHeaders } from './playwright.js';
+import { getQwenHeaders, getBasicHeaders, getGuestHeaders } from './playwright.js';
 import { MAX_PAYLOAD_SIZE } from '../core/model-registry.js';
 import { markAccountRateLimited } from '../core/account-manager.js';
 import crypto from 'crypto';
@@ -415,19 +415,56 @@ export async function createQwenStream(
   files?: QwenFileEntry[],
   pendingMultimodal?: Array<Array<{ type: string; text?: string; image_url?: { url: string }; video_url?: { url: string }; audio_url?: { url: string }; file_url?: { url: string } }>>
 ): Promise<{ stream: ReadableStream, headers: Record<string, string>, uiSessionId: string, controller: AbortController, accountId: string }> {
-  let chatEntry: WarmPoolEntry;
-  try {
-    chatEntry = await getWarmedChat(accountId);
-  } catch (err: any) {
-    if (err.message?.includes('chat is in progress') || err.message?.includes('The chat is in progress')) {
-      const retryAfterMs = 2000 + Math.floor(Math.random() * 2000);
-      throw new RetryableQwenStreamError(`Qwen: ${err.message}`, retryAfterMs);
+  let chatId: string;
+  let chatHeaders: Record<string, string>;
+
+  if (accountId === 'guest') {
+    chatHeaders = await getGuestHeaders();
+    const response = await fetch('https://chat.qwen.ai/api/v2/chats/new', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'pt-BR,pt;q=0.9',
+        'content-type': 'application/json',
+        cookie: chatHeaders['cookie'],
+        origin: 'https://chat.qwen.ai',
+        referer: 'https://chat.qwen.ai/c/guest',
+        'user-agent': chatHeaders['user-agent'],
+        'x-request-id': crypto.randomUUID(),
+        'bx-v': chatHeaders['bx-v'],
+        'bx-ua': chatHeaders['bx-ua'],
+        'bx-umidtoken': chatHeaders['bx-umidtoken'],
+        ...getClientHintsHeaders(),
+      },
+      body: JSON.stringify({
+        title: 'Guest Chat',
+        models: [modelId.replace('-no-thinking', '')],
+        chat_mode: 'guest',
+        chat_type: 't2t',
+        timestamp: Date.now(),
+        project_id: '',
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) throw new Error(`Failed to create guest chat: ${response.status}`);
+    const json = await response.json();
+    chatId = json.chat_id || json.id || json.data?.chat_id || json.data?.id;
+    if (!chatId) throw new Error(`Unexpected guest chat response: ${JSON.stringify(json).slice(0, 200)}`);
+  } else {
+    let chatEntry: WarmPoolEntry;
+    try {
+      chatEntry = await getWarmedChat(accountId);
+    } catch (err: any) {
+      if (err.message?.includes('chat is in progress') || err.message?.includes('The chat is in progress')) {
+        const retryAfterMs = 2000 + Math.floor(Math.random() * 2000);
+        throw new RetryableQwenStreamError(`Qwen: ${err.message}`, retryAfterMs);
+      }
+      throw err;
     }
-    throw err;
+    chatId = chatEntry.chatId;
+    chatHeaders = chatEntry.headers;
   }
 
-  const chatId = chatEntry.chatId;
-  const chatHeaders = chatEntry.headers;
   const actualParentId: string | null = null;
 
   // Process pending multimodal uploads — requires full headers with bx-ua/bx-umidtoken
@@ -473,7 +510,7 @@ export async function createQwenStream(
     version: '2.1',
     incremental_output: true,
     chat_id: chatId,
-    chat_mode: 'normal',
+    chat_mode: accountId === 'guest' ? 'guest' : 'normal',
     model: model,
     parent_id: actualParentId,
     messages: [
@@ -528,7 +565,7 @@ export async function createQwenStream(
       'content-type': 'application/json',
       'cookie': chatHeaders['cookie'],
       'origin': 'https://chat.qwen.ai',
-      'referer': `https://chat.qwen.ai/c/${chatId}`,
+      'referer': accountId === 'guest' ? 'https://chat.qwen.ai/c/guest' : `https://chat.qwen.ai/c/${chatId}`,
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
@@ -584,7 +621,7 @@ export async function createQwenStream(
 
         const retryContentType = retryResponse.headers.get('content-type') || '';
         if (retryResponse.ok && retryContentType.includes('text/event-stream') && retryResponse.body) {
-          return { stream: retryResponse.body, headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: chatEntry.accountId };
+          return { stream: retryResponse.body, headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: accountId || 'guest' };
         }
 
         const retryPeek = await retryResponse.clone().text().catch(() => '');
@@ -617,7 +654,7 @@ export async function createQwenStream(
           } catch (e) {
             if (e instanceof QwenUpstreamError) throw e;
           }
-          return { stream: retryResponse.body, headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: chatEntry.accountId };
+          return { stream: retryResponse.body, headers: freshHeaders, uiSessionId: chatId, controller: retryController, accountId: accountId || 'guest' };
         }
       } catch (retryErr) {
         if (retryErr instanceof QwenUpstreamError) throw retryErr;
@@ -703,5 +740,5 @@ export async function createQwenStream(
     throw new Error(`Failed to fetch from Qwen: ${response.status} ${response.statusText} - ${errText}`);
   }
 
-  return { stream: response.body, headers: chatHeaders, uiSessionId: chatId, controller, accountId: chatEntry.accountId };
+  return { stream: response.body, headers: chatHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
 }

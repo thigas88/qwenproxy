@@ -355,7 +355,118 @@ async function loginToQwenUI(email: string, password: string): Promise<boolean> 
   return false;
 }
 
+let guestContext: BrowserContext | null = null;
+let guestPage: Page | null = null;
+let guestHeadersCache: { headers: Record<string, string>, timestamp: number } | null = null;
+const GUEST_HEADERS_TTL = 30 * 60 * 1000;
+
+export async function getGuestHeaders(): Promise<Record<string, string>> {
+  if (guestHeadersCache && (Date.now() - guestHeadersCache.timestamp) < GUEST_HEADERS_TTL) {
+    return guestHeadersCache.headers;
+  }
+
+  if (!guestPage) {
+    const profilePath = path.resolve('qwen_profiles', '_guest');
+    const { engine, channel } = resolveBrowserEngine('chromium');
+    guestContext = await engine.launchPersistentContext(profilePath, {
+      headless: config.browser.headless,
+      channel,
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: ['--disable-blink-features=AutomationControlled', '--disable-features=IsolateOrigins,site-per-process', '--disable-infobars', '--no-first-run', '--no-default-browser-check']
+    });
+    await guestContext.addInitScript(getStealthScript());
+    guestPage = await guestContext.newPage();
+    
+    await guestPage.goto('https://chat.qwen.ai/c/guest', { waitUntil: 'domcontentloaded' });
+    
+    try {
+      const keepSessionBtn = await guestPage.$('button:has-text("Manter sessão terminada"), button:has-text("Keep session ended"), button:has-text("Manter sessão encerrada")');
+      if (keepSessionBtn) {
+        await keepSessionBtn.click();
+        console.log('[Playwright] Guest: Clicked "Manter sessão terminada"');
+        await sleep(1000);
+      }
+    } catch (e) {
+      // Modal might not be there
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Timeout getting guest headers')), 30000);
+    
+    const routeHandler = async (route: any, request: any) => {
+      clearTimeout(timeout);
+      const reqHeaders = request.headers();
+      console.log('[Playwright] Guest intercepted request:', request.url());
+      
+      const extractedHeaders = {
+        'cookie': reqHeaders['cookie'] || '',
+        'bx-ua': reqHeaders['bx-ua'] || '',
+        'bx-umidtoken': reqHeaders['bx-umidtoken'] || '',
+        'bx-v': reqHeaders['bx-v'] || '2.5.36',
+        'user-agent': reqHeaders['user-agent'] || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
+      };
+      
+      if (extractedHeaders['bx-ua']) {
+        console.log('[Playwright] Guest: Successfully captured bx-ua');
+        guestHeadersCache = { headers: extractedHeaders, timestamp: Date.now() };
+        await route.abort('aborted');
+        await guestPage!.unroute('**/api/v2/chat/completions*', routeHandler);
+        
+        import('./qwen.js').then(m => m.disableNativeTools('guest').catch(() => {}));
+        
+        resolve(extractedHeaders);
+      } else {
+        console.log('[Playwright] Guest: Request missing bx-ua, continuing route. Headers:', Object.keys(reqHeaders));
+        await route.continue();
+        // If it's the completions request and we still don't have bx-ua, we might need to resolve anyway 
+        // or the UI interaction failed to trigger the SDK.
+        if (request.url().includes('/api/v2/chat/completions')) {
+           console.warn('[Playwright] Guest: Completions request made without bx-ua. Resolving with available headers.');
+           guestHeadersCache = { headers: extractedHeaders, timestamp: Date.now() };
+           await guestPage!.unroute('**/api/v2/chat/completions*', routeHandler);
+           resolve(extractedHeaders);
+        }
+      }
+    };
+
+    guestPage!.route('**/api/v2/chat/completions*', routeHandler).then(async () => {
+      const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
+      try {
+        await guestPage!.waitForSelector(inputSelector, { timeout: 10000 });
+        await guestPage!.focus(inputSelector);
+        await guestPage!.fill(inputSelector, '');
+        await guestPage!.type(inputSelector, 'a', { delay: 50 });
+        await sleep(1000);
+        
+        const selectors = ['.message-input-right-button-send .send-button', '.chat-prompt-send-button', 'button.send-button'];
+        let clicked = false;
+        for (const selector of selectors) {
+          const btn = await guestPage!.$(selector);
+          if (btn && await btn.isVisible()) {
+            await btn.click({ force: true, delay: 50 }).catch(() => {});
+            clicked = true;
+            break;
+          }
+        }
+        if (!clicked) {
+          await guestPage!.keyboard.press('Enter');
+        }
+      } catch (e) {
+        clearTimeout(timeout);
+        reject(e);
+      }
+    });
+  });
+}
+
 export async function getQwenHeaders(forceNew = false, accountId?: string): Promise<{ headers: Record<string, string>, chatSessionId: string, parentMessageId: string | null }> {
+  if (accountId === 'guest') {
+    const headers = await getGuestHeaders();
+    return { headers, chatSessionId: 'guest-session', parentMessageId: null };
+  }
+
   const cacheKey = accountId || 'global';
   const cache = getAccountHeaderCache(cacheKey);
 
