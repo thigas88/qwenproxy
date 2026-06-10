@@ -17,7 +17,7 @@ function getClientHintsHeaders(): Record<string, string> {
 }
 
 function getRandomDelay(): number {
-  return 200 + Math.floor(Math.random() * 600);
+  return 30 + Math.floor(Math.random() * 80);
 }
 
 export class RetryableQwenStreamError extends Error {
@@ -152,18 +152,7 @@ async function refillPoolForAccount(accountId: string) {
   let headers: Record<string, string>;
   try {
     const acctId = accountId === 'global' ? undefined : accountId;
-    try {
-      const { headers: fullHeaders } = await getQwenHeaders(false, acctId);
-      headers = {
-        cookie: fullHeaders['cookie'] || '',
-        'user-agent': fullHeaders['user-agent'] || '',
-        'bx-v': fullHeaders['bx-v'] || '',
-        'bx-ua': fullHeaders['bx-ua'] || '',
-        'bx-umidtoken': fullHeaders['bx-umidtoken'] || '',
-      };
-    } catch {
-      headers = await getBasicQwenHeaders(acctId);
-    }
+    headers = await getBasicQwenHeaders(acctId);
   } catch (err) {
     console.error(`[WarmPool] header fetch failed for ${accountId}:`, (err as Error).message);
     return;
