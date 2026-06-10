@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.4.0...v1.5.0) (2026-06-10)
+
+
+### Features
+
+* add QWEN_GUEST_MODE_ONLY environment variable to bypass account rotation ([ea928cd](https://github.com/pedrofariasx/qwenproxy/commit/ea928cd09ab3842b211f7c2b569a189542da8b04))
+
 # [1.4.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.3.3...v1.4.0) (2026-06-10)
 
 
