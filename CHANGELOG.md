@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.5.1...v1.6.0) (2026-06-11)
+
+
+### Features
+
+* route API requests through browser fetch for real TLS fingerprint and harden stealth ([b32d66a](https://github.com/pedrofariasx/qwenproxy/commit/b32d66a4e2929cbf383179aa282899939833bd7f))
+
 ## [1.5.1](https://github.com/pedrofariasx/qwenproxy/compare/v1.5.0...v1.5.1) (2026-06-10)
 
 
