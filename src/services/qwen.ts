@@ -1,6 +1,7 @@
 import { getQwenHeaders, getBasicHeaders, getGuestHeaders, getPageForAccount, browserFetch, browserStreamFetch, CHROME_CLIENT_HINTS, CHROME_UA } from './playwright.js';
 import { MAX_PAYLOAD_SIZE } from '../core/model-registry.js';
 import { markAccountRateLimited } from '../core/account-manager.js';
+import { config } from '../core/config.js';
 import crypto from 'crypto';
 
 const CACHED_TIMEZONE = new Date().toString().split(' (')[0];
@@ -132,7 +133,7 @@ async function createRealQwenChat(header: Record<string, string>, accountId?: st
           'timezone': CACHED_TIMEZONE,
         },
         body,
-        timeoutMs: 30000,
+        timeoutMs: config.timeouts.http,
       });
 
       if (result.status === 429) {
@@ -176,7 +177,7 @@ async function createRealQwenChat(header: Record<string, string>, accountId?: st
       ...getClientHintsHeaders(),
     },
     body,
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(config.timeouts.http),
   });
 
   if (!response.ok) {
@@ -355,7 +356,7 @@ export async function disableNativeTools(accountId?: string): Promise<void> {
             'timezone': CACHED_TIMEZONE,
           },
           body: JSON.stringify(payload),
-          timeoutMs: 30000,
+          timeoutMs: config.timeouts.http,
         });
         if (result.status && result.status < 400) {
           console.log(`[Qwen] Native tools disabled successfully for ${cacheKey}.`);
@@ -370,7 +371,7 @@ export async function disableNativeTools(accountId?: string): Promise<void> {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), config.timeouts.http);
     const response = await fetch('https://chat.qwen.ai/api/v2/users/user/settings/update', {
       method: 'POST',
       headers: {
@@ -422,7 +423,7 @@ export async function fetchQwenModels(accountId?: string): Promise<any[]> {
           'timezone': CACHED_TIMEZONE,
           'source': 'web',
         },
-        timeoutMs: 30000,
+        timeoutMs: config.timeouts.http,
       });
       if (result.status && result.status < 400) {
         return processModelsJson(JSON.parse(result.body));
@@ -526,7 +527,7 @@ export async function createQwenStream(
           method: 'POST',
           headers: { 'accept': 'application/json, text/plain, */*', 'content-type': 'application/json', 'x-request-id': crypto.randomUUID(), 'timezone': CACHED_TIMEZONE },
           body: guestBody,
-          timeoutMs: 30000,
+          timeoutMs: config.timeouts.http,
         });
         if (!result.status || result.status >= 400) throw new Error(`Failed to create guest chat: ${result.status}`);
         const json = JSON.parse(result.body);
@@ -538,7 +539,7 @@ export async function createQwenStream(
           method: 'POST',
           headers: { 'accept': 'application/json, text/plain, */*', 'content-type': 'application/json', cookie: chatHeaders['cookie'], origin: 'https://chat.qwen.ai', referer: 'https://chat.qwen.ai/c/guest', 'user-agent': chatHeaders['user-agent'], 'x-request-id': crypto.randomUUID(), 'bx-v': chatHeaders['bx-v'], 'bx-ua': chatHeaders['bx-ua'], 'bx-umidtoken': chatHeaders['bx-umidtoken'], ...getClientHintsHeaders() },
           body: guestBody,
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(config.timeouts.http),
         });
         if (!response.ok) throw new Error(`Failed to create guest chat: ${response.status}`);
         const json = await response.json();
@@ -550,7 +551,7 @@ export async function createQwenStream(
         method: 'POST',
         headers: { 'accept': 'application/json, text/plain, */*', 'content-type': 'application/json', cookie: chatHeaders['cookie'], origin: 'https://chat.qwen.ai', referer: 'https://chat.qwen.ai/c/guest', 'user-agent': chatHeaders['user-agent'], 'x-request-id': crypto.randomUUID(), 'bx-v': chatHeaders['bx-v'], 'bx-ua': chatHeaders['bx-ua'], 'bx-umidtoken': chatHeaders['bx-umidtoken'], ...getClientHintsHeaders() },
         body: guestBody,
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(config.timeouts.http),
       });
       if (!response.ok) throw new Error(`Failed to create guest chat: ${response.status}`);
       const json = await response.json();

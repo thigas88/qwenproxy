@@ -385,7 +385,7 @@ async function checkValidSession(): Promise<boolean> {
     const cookies = await activePage.context().cookies();
     const hasAuthCookie = cookies.some(c => c.name.toLowerCase().includes('token') || c.name.toLowerCase().includes('session'));
     if (!hasAuthCookie) return false;
-    await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: 10000 });
+    await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
     const isLogged = !activePage.url().includes('auth') && !activePage.url().includes('login');
     return isLogged;
   } catch {
@@ -450,7 +450,7 @@ async function loginToQwenUI(email: string, password: string): Promise<boolean> 
   }
 
   try {
-    await activePage.waitForSelector('input[type="email"], input[placeholder*="Email"]', { timeout: 5000 });
+    await activePage.waitForSelector('input[type="email"], input[placeholder*="Email"]', { timeout: config.timeouts.page });
   } catch {
     if (activePage.url().includes('/auth')) throw new Error('Email input not found');
     console.log('[Playwright] Already logged in');
@@ -462,7 +462,7 @@ async function loginToQwenUI(email: string, password: string): Promise<boolean> 
   await activePage.keyboard.press('Enter');
   await sleep(1000);
 
-  await activePage.waitForSelector('input[type="password"]', { timeout: 10000 });
+  await activePage.waitForSelector('input[type="password"]', { timeout: config.timeouts.page });
   console.log('[Playwright] UI: Filling password...');
   await activePage.fill('input[type="password"]', password);
   await activePage.keyboard.press('Enter');
@@ -502,7 +502,7 @@ export async function getGuestHeaders(): Promise<Record<string, string>> {
     await guestContext.addInitScript(getStealthScript());
     guestPage = await guestContext.newPage();
     
-    await guestPage.goto('https://chat.qwen.ai/c/guest', { waitUntil: 'domcontentloaded' });
+    await guestPage.goto('https://chat.qwen.ai/c/guest', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
     
     try {
       const keepSessionBtn = await guestPage.$('button:has-text("Manter sessão terminada"), button:has-text("Keep session ended"), button:has-text("Manter sessão encerrada")');
@@ -517,7 +517,7 @@ export async function getGuestHeaders(): Promise<Record<string, string>> {
   }
 
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timeout getting guest headers')), 30000);
+    const timeout = setTimeout(() => reject(new Error('Timeout getting guest headers')), config.timeouts.headers);
     
     const routeHandler = async (route: any, request: any) => {
       clearTimeout(timeout);
@@ -558,7 +558,7 @@ export async function getGuestHeaders(): Promise<Record<string, string>> {
     guestPage!.route('**/api/v2/chat/completions*', routeHandler).then(async () => {
       const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
       try {
-        await guestPage!.waitForSelector(inputSelector, { timeout: 10000 });
+        await guestPage!.waitForSelector(inputSelector, { timeout: config.timeouts.page });
         await guestPage!.focus(inputSelector);
         await guestPage!.fill(inputSelector, '');
         await guestPage!.type(inputSelector, 'a', { delay: 50 });
@@ -751,7 +751,7 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
 
   console.log(`[Playwright] Waiting for chat input for ${cacheKey}...`);
   const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
-  await page.waitForSelector(inputSelector, { timeout: 30000 }).catch(() => {
+  await page.waitForSelector(inputSelector, { timeout: config.timeouts.page }).catch(() => {
     console.error(`[Playwright] Chat input not found for ${cacheKey}. Current URL:`, page.url());
     throw new Error(`Timeout waiting for chat input for ${cacheKey}. Are you logged in?`);
   });
@@ -767,7 +767,7 @@ async function _getQwenHeadersInternal(forceNew = false, accountId?: string): Pr
         console.error('[Playwright] Failed to save error screenshot:', err.message);
       }
       reject(new Error(`Timeout waiting for Qwen headers for ${cacheKey}`));
-    }, 60000);
+    }, config.timeouts.headers);
 
     console.log(`[Playwright] Setting up route interception for ${cacheKey}...`);
     const routeHandler = async (route: any, request: any) => {
@@ -906,13 +906,13 @@ export async function initPlaywrightForAccount(account: QwenAccount, headless = 
 
   // Navigate to Qwen home to validate session and populate cookies
   try {
-    await acctPage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await acctPage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
     const url = acctPage.url();
     if (url.includes('auth') || url.includes('login')) {
       if (account.email && account.password) {
         console.log(`[Playwright] Session expired for ${account.email}, re-logging in...`);
         await loginToQwenWithContext(acctContext, acctPage, account.email, account.password);
-        await acctPage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+        await acctPage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
       } else {
         console.warn(`[Playwright] Session expired for account ${account.id} but no credentials available for re-login.`);
       }
@@ -1122,7 +1122,7 @@ export async function browserStreamFetch(
     streamCallbacks.delete(reqId);
     abortControllers.delete(reqId);
     metaResolve({ status: 0, statusText: 'Timeout', contentType: '', headers: {} });
-  }, options.timeoutMs || 130000);
+  }, options.timeoutMs || config.timeouts.chat);
 
   streamCallbacks.set(reqId, {
     onMeta: (meta) => {
