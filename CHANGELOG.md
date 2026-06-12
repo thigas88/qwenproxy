@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/pedrofariasx/qwenproxy/compare/v1.6.0...v1.6.1) (2026-06-12)
+
+
+### Performance Improvements
+
+* reduce latency spikes with warm pool low-water mark and cache optimizations ([481f7c5](https://github.com/pedrofariasx/qwenproxy/commit/481f7c5d37061d5949f838f7ebc9003cd37c9414))
+
 # [1.6.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.5.1...v1.6.0) (2026-06-11)
 
 
