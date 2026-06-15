@@ -12,15 +12,18 @@ Proxy API local compatível com OpenAI que roteia requisições para os modelos 
 
 ## Features
 
-- **OpenAI API Compatible** — Interface compatível com `/v1/chat/completions` e `/v1/models`.
+- **OpenAI API Compatible** — Interface compatível com `/v1/chat/completions`, `/v1/models` e `/v1/upload`.
 - **Multi-Account** — Gerencie múltiplas contas Qwen com rotação round-robin e cooldown automático.
+- **Guest Mode** — Modo convidado sem necessidade de login, usando a API pública do Qwen.
 - **SQLite Storage** — Contas salvas em banco de dados SQLite (WAL mode) para performance e confiabilidade.
 - **Reasoning Support** — Suporte completo ao modo de pensamento (thinking) dos modelos Qwen.
+- **Multimodal Upload** — Envio de imagens, vídeos, áudios e documentos via `/v1/upload` com integração ao OSS do Qwen.
 - **Tool Execution** — Sistema de execução de ferramentas locais integrado ao fluxo do chat.
 - **Session Persistence** — Perfil de navegador persistente por conta em `qwen_profiles/`.
 - **Auto-Login** — Login automático via credenciais com recuperação de sessão.
 - **Browser Selection** — Escolha entre Chromium, Chrome, Firefox, Edge ou WebKit.
 - **Monitoring** — Health check, métricas Prometheus e watchdog integrados.
+- **CLI Binary** — Instale globalmente via npm e use o comando `qwenproxy` diretamente.
 - **Docker Ready** — Deploy para VPS com Docker, volumes persistentes e graceful shutdown.
 
 ---
@@ -62,7 +65,15 @@ graph TD
 
 ## Instalação
 
-### Via npm
+### Via npm (Global)
+
+```bash
+npm install -g @pedrofariasx/qwenproxy
+npx playwright install
+qwenproxy
+```
+
+### Via npm (Local)
 
 ```bash
 git clone https://github.com/pedrofariasx/qwenproxy.git
@@ -87,6 +98,9 @@ Crie o arquivo `.env` na raiz do projeto (veja `.env.example`):
 # Porta do servidor (default: 3000)
 PORT=3000
 
+# Host do servidor (default: 0.0.0.0)
+HOST=0.0.0.0
+
 # Chave de API para proteger os endpoints (opcional)
 API_KEY=sua-chave-secreta-aqui
 
@@ -94,8 +108,22 @@ API_KEY=sua-chave-secreta-aqui
 QWEN_EMAIL=seu-email@exemplo.com
 QWEN_PASSWORD=sua-senha-aqui
 
-# Navegador (chromium, firefox, chrome, edge)
+# Modo convidado - sem login, usa API pública (default: false)
+QWEN_GUEST_MODE_ONLY=false
+
+# Navegador (chromium, firefox, chrome, edge, webkit)
 BROWSER=chromium
+
+# Executar navegador sem interface gráfica (default: true)
+HEADLESS=true
+
+# Timeouts (milissegundos)
+NAVIGATION_TIMEOUT=45000
+PAGE_TIMEOUT=30000
+HTTP_TIMEOUT=30000
+HEADERS_TIMEOUT=60000
+CHAT_TIMEOUT=120000
+STREAM_IDLE_TIMEOUT=180000
 ```
 
 ---
@@ -143,6 +171,7 @@ O servidor inicia em `http://localhost:3000` com as seguintes rotas:
 | `/v1/chat/completions/stop` | POST | Abortar uma geração ativa |
 | `/v1/models` | GET | Listar modelos disponíveis |
 | `/v1/models/:model` | GET | Informações de um modelo específico |
+| `/v1/upload` | POST | Upload de arquivos multimodais (imagens, vídeos, áudios, documentos) |
 | `/health` | GET | Health check com status do sistema |
 | `/metrics` | GET | Métricas no formato Prometheus |
 
@@ -200,6 +229,11 @@ services:
       - ./data:/app/data               # Banco SQLite
       - ./qwen_profiles:/app/qwen_profiles  # Sessões dos navegadores
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
 
 ### Volumes persistentes
@@ -248,6 +282,7 @@ qwenproxy/
 │   └── utils/
 │       ├── context-truncation.ts # Truncamento de contexto
 │       ├── json.ts              # Parser JSON robusto
+│       ├── qwen-stream-parser.ts # Parser de streams SSE do Qwen
 │       └── types.ts             # Re-exports de tipos
 ├── data/                        # Banco SQLite (gitignored)
 ├── qwen_profiles/               # Perfis de navegador por conta (gitignored)
