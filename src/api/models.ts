@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { config } from '../core/config.js'
-import { getBasicHeaders } from '../services/playwright.js'
+import { getBasicHeaders } from '../services/playwright.ts'
 
 const app = new Hono()
 

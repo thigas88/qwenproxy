@@ -105,7 +105,7 @@ export async function startServer(): Promise<void> {
     watchdog.stop()
     metrics.stopCollection()
     await cache.close()
-    const { closePlaywright } = await import('../services/playwright.js')
+    const { closePlaywright } = await import('../services/playwright.ts')
     await closePlaywright()
     const { closeDatabase } = await import('../core/database.ts')
     closeDatabase()
