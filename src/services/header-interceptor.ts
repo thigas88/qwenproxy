@@ -47,7 +47,7 @@ export async function getBasicHeaders(accountId?: string): Promise<{ cookie: str
 
   let page = accountId ? accountPages.get(accountId) : getActivePage();
   if (accountId && !page) {
-    const { getAccountCredentials } = await import('../core/accounts.ts');
+    const { getAccountCredentials } = await import('../core/accounts.js');
     const creds = getAccountCredentials(accountId);
     if (creds) {
       await initPlaywrightForAccount(creds, config.browser.headless);
@@ -315,7 +315,7 @@ async function _getQwenHeadersInternalOnce(forceNew = false, accountId?: string)
   }
 
   if (accountId && !accountPages.has(accountId)) {
-    const { getAccountCredentials } = await import('../core/accounts.ts');
+    const { getAccountCredentials } = await import('../core/accounts.js');
     const creds = getAccountCredentials(accountId);
     if (creds) {
       await initPlaywrightForAccount(creds, config.browser.headless);

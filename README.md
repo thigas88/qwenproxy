@@ -249,8 +249,10 @@ services:
 
 ```
 qwenproxy/
+├── bin/
+│   └── qwenproxy.mjs            # Entry point do CLI binário
 ├── src/
-│   ├── index.ts                 # Entry point
+│   ├── index.ts                 # Entry point do servidor
 │   ├── login.ts                 # CLI de gerenciamento de contas
 │   ├── api/
 │   │   ├── models.ts            # Endpoints /v1/models
@@ -261,19 +263,30 @@ qwenproxy/
 │   │   ├── account-manager.ts   # Rotação round-robin + cooldowns
 │   │   ├── accounts.ts          # CRUD de contas (SQLite)
 │   │   ├── config.ts            # Configuração com Zod
+│   │   ├── crypto-utils.ts      # Criptografia de senhas em repouso
 │   │   ├── database.ts          # Conexão e migrations SQLite
 │   │   ├── logger.ts            # Logger estruturado
-│   │   ├── metrics.ts           # Coleta de métricas
+│   │   ├── metrics.ts           # Coleta de métricas Prometheus
 │   │   ├── model-registry.ts    # Registro de modelos e context windows
 │   │   ├── stream-registry.ts   # Tracking de streams ativos
 │   │   └── watchdog.ts          # Health monitoring
 │   ├── routes/
 │   │   ├── chat.ts              # Handler /v1/chat/completions
+│   │   ├── sse-parser.ts        # Parser incremental de SSE + delta
+│   │   ├── stream-handler.ts    # Orquestração de streaming SSE
+│   │   ├── tool-handler.ts      # Execução de tools locais
 │   │   └── upload.ts            # Handler /v1/upload (multimodal)
 │   ├── services/
-│   │   ├── playwright.ts        # Automação de navegador
-│   │   └── qwen.ts              # Integração com API do Qwen
-│   ├── tests/                   # Testes automatizados
+│   │   ├── browser-manager.ts   # Ciclo de vida de browsers/contexts
+│   │   ├── error-handler.ts     # Tipagem e retry de erros Qwen
+│   │   ├── header-interceptor.ts # Captura de cookies/headers via CDP
+│   │   ├── playwright.ts        # Fachada do serviço Playwright
+│   │   ├── qwen.ts              # Integração com API do Qwen
+│   │   ├── stealth.ts           # Script anti-detecção
+│   │   ├── stream-bridge.ts     # Ponte de stream browser → Node
+│   │   ├── stream-creator.ts    # Criação de chats e streams Qwen
+│   │   └── warm-pool.ts         # Pool de chats pré-aquecidos
+│   ├── tests/                   # Testes automatizados (node:test)
 │   ├── tools/
 │   │   ├── parser.ts            # Parser de <tool_call> tags
 │   │   ├── registry.ts          # Registro de tools
@@ -288,6 +301,8 @@ qwenproxy/
 ├── qwen_profiles/               # Perfis de navegador por conta (gitignored)
 ├── Dockerfile
 ├── docker-compose.yml
+├── tsconfig.json
+├── tsconfig.build.json
 └── package.json
 ```
 

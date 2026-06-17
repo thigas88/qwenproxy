@@ -2,7 +2,6 @@
   "name": "@pedrofariasx/qwenproxy",
   "version": "1.7.2",
   "description": "Local OpenAI-compatible proxy API that routes requests to Qwen (chat.qwen.ai) via Playwright browser automation.",
-  "main": "index.js",
   "scripts": {
     "start": "npx tsx src/index.ts",
     "start:firefox": "npx tsx src/index.ts --browser=firefox",
@@ -12,12 +11,13 @@
     "login:firefox": "npx tsx src/login.ts --browser=firefox",
     "login:chrome": "npx tsx src/login.ts --browser=chrome",
     "login:edge": "npx tsx src/login.ts --browser=edge",
+    "build": "tsc -p tsconfig.build.json",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix"
   },
-  "keywords": [],
+  "keywords": ["openai", "proxy", "qwen", "playwright", "llm", "api", "chat-completions"],
   "author": "Pedro Farias",
   "license": "ISC",
   "dependencies": {
@@ -56,5 +56,8 @@
     "src/**/*",
     "bin/**/*"
   ],
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

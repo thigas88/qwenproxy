@@ -435,7 +435,7 @@ export async function createQwenStream(
   const resolvedFiles = files || [];
   if (pendingMultimodal && pendingMultimodal.length > 0 && resolvedFiles.length === 0) {
     try {
-      const { processImagesForQwen } = await import('../routes/upload.ts');
+      const { processImagesForQwen } = await import('../routes/upload.js');
       const { headers: fullHeaders } = await getQwenHeaders(false, accountId);
       const uploadHeaders: Record<string, string> = {
         cookie: fullHeaders['cookie'] || chatHeaders['cookie'] || '',
