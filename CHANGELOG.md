@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.7.3...v1.8.0) (2026-06-19)
+
+
+### Bug Fixes
+
+* resolve lint errors in captcha-solver and captcha test ([5083df0](https://github.com/pedrofariasx/qwenproxy/commit/5083df00ee0afff8a90c91ac350b391d62d86b6b))
+
+
+### Features
+
+* add automated Baxia captcha solver and enhance anti-detection fingerprint ([7eda9bc](https://github.com/pedrofariasx/qwenproxy/commit/7eda9bca2530949d396b5f0481665a59644816b7))
+
 ## [1.7.3](https://github.com/pedrofariasx/qwenproxy/compare/v1.7.2...v1.7.3) (2026-06-18)
 
 
