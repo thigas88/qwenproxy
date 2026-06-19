@@ -28,3 +28,4 @@ export {
 } from './stream-bridge.js';
 
 export { getStealthScript } from './stealth.js';
+export { solveBaxiaCaptcha, startCaptchaWatcher } from './captcha-solver.js';

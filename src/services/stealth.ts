@@ -1,18 +1,81 @@
 export function getStealthScript(): string {
   return `
+    // 1. Webdriver evasion
     try {
-      delete navigator.__proto__.webdriver;
+      if (navigator.webdriver !== undefined) {
+        const proto = Object.getPrototypeOf(navigator);
+        const desc = Object.getOwnPropertyDescriptor(proto, 'webdriver');
+        if (desc) {
+          Object.defineProperty(proto, 'webdriver', {
+            ...desc,
+            get: () => undefined
+          });
+        }
+      }
     } catch(e) {}
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+    // 2. User-Agent and AppVersion Evasion
+    const customUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+    try {
+      Object.defineProperty(navigator, 'userAgent', { get: () => customUA });
+      Object.defineProperty(navigator, 'appVersion', { get: () => customUA.replace('Mozilla/', '') });
+      Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+    } catch(e) {}
+
+    // 3. User-Agent Client Hints Evasion
+    try {
+      const userAgentData = {
+        brands: [
+          { brand: 'Not/A)Brand', version: '99' },
+          { brand: 'Google Chrome', version: '137' },
+          { brand: 'Chromium', version: '137' }
+        ],
+        mobile: false,
+        platform: 'Windows',
+        getHighEntropyValues: async (hints) => {
+          return {
+            brands: [
+              { brand: 'Not/A)Brand', version: '99.0.0.0' },
+              { brand: 'Google Chrome', version: '137.0.0.0' },
+              { brand: 'Chromium', version: '137.0.0.0' }
+            ],
+            mobile: false,
+            platform: 'Windows',
+            platformVersion: '15.0.0', // Windows 11
+            architecture: 'x86',
+            bitness: '64',
+            model: '',
+            uaFullVersion: '137.0.0.0',
+            fullVersionList: [
+              { brand: 'Not/A)Brand', version: '99.0.0.0' },
+              { brand: 'Google Chrome', version: '137.0.0.0' },
+              { brand: 'Chromium', version: '137.0.0.0' }
+            ]
+          };
+        }
+      };
+      Object.defineProperty(navigator, 'userAgentData', { get: () => userAgentData });
+    } catch(e) {}
+
+    // 4. Standard Browser Props
     Object.defineProperty(navigator, 'languages', {
       get: () => ['pt-BR', 'pt', 'en-US', 'en'],
     });
     Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
     Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
     Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
     Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
 
+    // 5. Headless Dimensions Evasion (avoid outerWidth/outerHeight being 0)
+    try {
+      if (window.outerWidth === 0 || window.outerHeight === 0) {
+        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 85 });
+      }
+    } catch(e) {}
+
+    // 6. Chrome API mocking
     window.chrome = {
       runtime: { onConnect: {}, onMessage: {} },
       loadTimes: function() { return {}; },
@@ -20,12 +83,14 @@ export function getStealthScript(): string {
       app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
     };
 
+    // 7. Notification Permission query override
     const originalQuery = window.navigator.permissions.query;
     window.navigator.permissions.query = (parameters) =>
       parameters.name === 'notifications'
         ? Promise.resolve({ state: (typeof Notification !== 'undefined' ? Notification.permission : 'default'), onchange: null })
         : originalQuery(parameters);
 
+    // 8. WebGL Spoofing (Vendor & Renderer)
     const getParameter = WebGLRenderingContext.prototype.getParameter;
     WebGLRenderingContext.prototype.getParameter = function(parameter) {
       if (parameter === 37445) return 'Intel Inc.';
@@ -41,6 +106,33 @@ export function getStealthScript(): string {
       };
     }
 
+    // 9. WebGL readPixels noise injection to prevent WebGL fingerprinting
+    const _readPixels = WebGLRenderingContext.prototype.readPixels;
+    WebGLRenderingContext.prototype.readPixels = function(x, y, width, height, format, type, pixels) {
+      _readPixels.apply(this, arguments);
+      if (pixels) {
+        for (let i = 0; i < pixels.length; i++) {
+          if (Math.random() < 0.03) {
+            pixels[i] = Math.min(255, Math.max(0, pixels[i] + (Math.random() > 0.5 ? 1 : -1)));
+          }
+        }
+      }
+    };
+    if (typeof WebGL2RenderingContext !== 'undefined') {
+      const _readPixels2 = WebGL2RenderingContext.prototype.readPixels;
+      WebGL2RenderingContext.prototype.readPixels = function(x, y, width, height, format, type, pixels) {
+        _readPixels2.apply(this, arguments);
+        if (pixels) {
+          for (let i = 0; i < pixels.length; i++) {
+            if (Math.random() < 0.03) {
+              pixels[i] = Math.min(255, Math.max(0, pixels[i] + (Math.random() > 0.5 ? 1 : -1)));
+            }
+          }
+        }
+      };
+    }
+
+    // 10. Connection mock
     Object.defineProperty(navigator, 'connection', {
       get: () => ({
         effectiveType: '4g',
@@ -52,6 +144,7 @@ export function getStealthScript(): string {
       }),
     });
 
+    // 11. Plugins & MimeTypes Evasion
     (function() {
       function makeMime(desc, suffixes, type) {
         const m = { description: desc, suffixes: suffixes, type: type };
@@ -116,6 +209,7 @@ export function getStealthScript(): string {
       Object.defineProperty(navigator, 'mimeTypes', { get: () => mimeArr });
     })();
 
+    // 12. Advanced Canvas Fingerprinting Evasion
     (function() {
       const _toDataURL = HTMLCanvasElement.prototype.toDataURL;
       const _toBlob = HTMLCanvasElement.prototype.toBlob;
@@ -126,6 +220,7 @@ export function getStealthScript(): string {
           const ctx = canvas.getContext('2d');
           if (!ctx) return;
           const style = ctx.fillStyle;
+          // Very slight noise fill
           ctx.fillStyle = 'rgba(255,255,255,0.01)';
           ctx.fillRect(0, 0, 1, 1);
           ctx.fillStyle = style;
@@ -140,8 +235,24 @@ export function getStealthScript(): string {
         addNoise(this);
         return _toBlob.apply(this, args);
       };
+
+      // Add noise to getImageData to break Canvas hash verification scripts
+      CanvasRenderingContext2D.prototype.getImageData = function(x, y, w, h) {
+        const imageData = _getImageData.apply(this, arguments);
+        const data = imageData.data;
+        // Subtle pixel manipulation
+        for (let i = 0; i < data.length; i += 4) {
+          if (Math.random() < 0.05) {
+            data[i] = Math.min(255, Math.max(0, data[i] + (Math.random() > 0.5 ? 1 : -1)));
+            data[i+1] = Math.min(255, Math.max(0, data[i+1] + (Math.random() > 0.5 ? 1 : -1)));
+            data[i+2] = Math.min(255, Math.max(0, data[i+2] + (Math.random() > 0.5 ? 1 : -1)));
+          }
+        }
+        return imageData;
+      };
     })();
 
+    // 13. Audio Fingerprinting Evasion
     (function() {
       if (typeof OfflineAudioContext === 'undefined') return;
       const _startRendering = OfflineAudioContext.prototype.startRendering;

@@ -19,12 +19,14 @@ import {
   setGuestPage,
   getOrLaunchBrowser,
   loadStorageState,
+  sharedContextOptions,
   getUiMutex,
   resetBrowserProfile,
   initPlaywright,
   initPlaywrightForAccount,
 } from './browser-manager.js';
 import { getStealthScript } from './stealth.js';
+import { startCaptchaWatcher } from './captcha-solver.js';
 
 export async function getCookies(accountId?: string): Promise<string> {
   if (process.env.TEST_MOCK_PLAYWRIGHT) return 'token=mock';
@@ -103,8 +105,7 @@ export async function getGuestHeaders(): Promise<Record<string, string>> {
     const sharedBrowser = await getOrLaunchBrowser('chromium');
     const storageState = loadStorageState('_guest');
     const guestCtx = await sharedBrowser.newContext({
-      userAgent: CHROME_UA,
-      ignoreHTTPSErrors: true,
+      ...sharedContextOptions(),
       ...(storageState ? { storageState } : {}),
     });
     await guestCtx.addInitScript(getStealthScript());
@@ -124,75 +125,80 @@ export async function getGuestHeaders(): Promise<Record<string, string>> {
     } catch { /* ignore popup errors */ }
   }
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      resetBrowserProfile('guest', 'guest')
-        .catch((err: any) => console.warn(`[Playwright] Failed to reset guest profile after timeout: ${err.message}`))
-        .finally(() => reject(new Error('Timeout getting guest headers')));
-    }, config.timeouts.headers);
+  const watcher = startCaptchaWatcher(guestPage!, config.timeouts.headers);
+  try {
+    return await new Promise<Record<string, string>>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        resetBrowserProfile('guest', 'guest')
+          .catch((err: any) => console.warn(`[Playwright] Failed to reset guest profile after timeout: ${err.message}`))
+          .finally(() => reject(new Error('Timeout getting guest headers')));
+      }, config.timeouts.headers);
 
-    const routeHandler = async (route: any, request: any) => {
-      clearTimeout(timeout);
-      const reqHeaders = request.headers();
-      console.log('[Playwright] Guest intercepted request:', request.url());
+      const routeHandler = async (route: any, request: any) => {
+        clearTimeout(timeout);
+        const reqHeaders = request.headers();
+        console.log('[Playwright] Guest intercepted request:', request.url());
 
-      const extractedHeaders = {
-        'cookie': reqHeaders['cookie'] || '',
-        'bx-ua': reqHeaders['bx-ua'] || '',
-        'bx-umidtoken': reqHeaders['bx-umidtoken'] || '',
-        'bx-v': reqHeaders['bx-v'] || '2.5.36',
-        'user-agent': reqHeaders['user-agent'] || CHROME_UA,
-      };
+        const extractedHeaders = {
+          'cookie': reqHeaders['cookie'] || '',
+          'bx-ua': reqHeaders['bx-ua'] || '',
+          'bx-umidtoken': reqHeaders['bx-umidtoken'] || '',
+          'bx-v': reqHeaders['bx-v'] || '2.5.36',
+          'user-agent': reqHeaders['user-agent'] || CHROME_UA,
+        };
 
-      if (extractedHeaders['bx-ua']) {
-        console.log('[Playwright] Guest: Successfully captured bx-ua');
-        setGuestHeadersCache({ headers: extractedHeaders, timestamp: Date.now() });
-        await route.abort('aborted');
-        await guestPage!.unroute('**/api/v2/chat/completions*', routeHandler);
+        if (extractedHeaders['bx-ua']) {
+          console.log('[Playwright] Guest: Successfully captured bx-ua');
+          setGuestHeadersCache({ headers: extractedHeaders, timestamp: Date.now() });
+          await route.abort('aborted');
+          await guestPage!.unroute('**/api/v2/chat/completions*', routeHandler);
 
-        import('./qwen.js').then(m => m.disableNativeTools('guest').catch(() => {}));
+          import('./qwen.js').then(m => m.disableNativeTools('guest').catch(() => {}));
 
-        resolve(extractedHeaders);
-      } else {
-        console.log('[Playwright] Guest: Request missing bx-ua, continuing route. Headers:', Object.keys(reqHeaders));
-        await route.continue();
-        if (request.url().includes('/api/v2/chat/completions')) {
-           console.warn('[Playwright] Guest: Completions request made without bx-ua. Resolving with available headers.');
-           setGuestHeadersCache({ headers: extractedHeaders, timestamp: Date.now() });
-           await guestPage!.unroute('**/api/v2/chat/completions*', routeHandler);
-           resolve(extractedHeaders);
-        }
-      }
-    };
-
-    guestPage!.route('**/api/v2/chat/completions*', routeHandler).then(async () => {
-      const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
-      try {
-        await guestPage!.waitForSelector(inputSelector, { timeout: config.timeouts.page });
-        await guestPage!.focus(inputSelector);
-        await guestPage!.fill(inputSelector, '');
-        await guestPage!.type(inputSelector, 'a', { delay: 50 });
-        await sleep(1000);
-
-        const selectors = ['.message-input-right-button-send .send-button', '.chat-prompt-send-button', 'button.send-button'];
-        let clicked = false;
-        for (const selector of selectors) {
-          const btn = await guestPage!.$(selector);
-          if (btn && await btn.isVisible()) {
-            await btn.click({ force: true, delay: 50 }).catch(() => {});
-            clicked = true;
-            break;
+          resolve(extractedHeaders);
+        } else {
+          console.log('[Playwright] Guest: Request missing bx-ua, continuing route. Headers:', Object.keys(reqHeaders));
+          await route.continue();
+          if (request.url().includes('/api/v2/chat/completions')) {
+             console.warn('[Playwright] Guest: Completions request made without bx-ua. Resolving with available headers.');
+             setGuestHeadersCache({ headers: extractedHeaders, timestamp: Date.now() });
+             await guestPage!.unroute('**/api/v2/chat/completions*', routeHandler);
+             resolve(extractedHeaders);
           }
         }
-        if (!clicked) {
-          await guestPage!.keyboard.press('Enter');
+      };
+
+      guestPage!.route('**/api/v2/chat/completions*', routeHandler).then(async () => {
+        const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
+        try {
+          await guestPage!.waitForSelector(inputSelector, { timeout: config.timeouts.page });
+          await guestPage!.focus(inputSelector);
+          await guestPage!.fill(inputSelector, '');
+          await guestPage!.type(inputSelector, 'a', { delay: 50 });
+          await sleep(1000);
+
+          const selectors = ['.message-input-right-button-send .send-button', '.chat-prompt-send-button', 'button.send-button'];
+          let clicked = false;
+          for (const selector of selectors) {
+            const btn = await guestPage!.$(selector);
+            if (btn && await btn.isVisible()) {
+              await btn.click({ force: true, delay: 50 }).catch(() => {});
+              clicked = true;
+              break;
+            }
+          }
+          if (!clicked) {
+            await guestPage!.keyboard.press('Enter');
+          }
+        } catch (e) {
+          clearTimeout(timeout);
+          reject(e);
         }
-      } catch (e) {
-        clearTimeout(timeout);
-        reject(e);
-      }
+      });
     });
-  });
+  } finally {
+    watcher.stop();
+  }
 }
 
 export async function getQwenHeaders(forceNew = false, accountId?: string): Promise<{ headers: Record<string, string>, chatSessionId: string, parentMessageId: string | null }> {
@@ -378,118 +384,123 @@ async function _getQwenHeadersInternalOnce(forceNew = false, accountId?: string)
     throw new Error(`Timeout waiting for chat input for ${cacheKey}. Are you logged in?`);
   });
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(async () => {
-      console.error(`[Playwright] Timeout waiting for Qwen headers for ${cacheKey}. Current URL:`, page.url());
-      try {
-        const path = await import('path');
-        const { PROFILES_DIR } = await import('./browser-manager.js');
-        const screenshotPath = path.join(PROFILES_DIR, `error_${cacheKey}.png`);
-        await page.screenshot({ path: screenshotPath });
-        console.log(`[Playwright] Error screenshot saved to ${screenshotPath}`);
-      } catch (err: any) {
-        console.error('[Playwright] Failed to save error screenshot:', err.message);
-      }
-      reject(new Error(`Timeout waiting for Qwen headers for ${cacheKey}`));
-    }, config.timeouts.headers);
-
-    console.log(`[Playwright] Setting up route interception for ${cacheKey}...`);
-    const routeHandler = async (route: any, request: any) => {
-      const reqHeaders = request.headers();
-      let uiSessionId = '';
-      let uiParentMessageId: string | null = null;
-
-      const postData = request.postData();
-      if (postData) {
+  const watcher = startCaptchaWatcher(page, config.timeouts.headers);
+  try {
+    return await new Promise<{ headers: Record<string, string>, chatSessionId: string, parentMessageId: string | null }>((resolve, reject) => {
+      const timeout = setTimeout(async () => {
+        console.error(`[Playwright] Timeout waiting for Qwen headers for ${cacheKey}. Current URL:`, page.url());
         try {
-          const payload = JSON.parse(postData);
-          if (payload.chat_id) {
-            uiSessionId = payload.chat_id;
-          }
-          if (payload.parent_id !== undefined) {
-            uiParentMessageId = payload.parent_id;
-          }
-        } catch { /* ignore parse errors */ }
-      }
+          const path = await import('path');
+          const { PROFILES_DIR } = await import('./browser-manager.js');
+          const screenshotPath = path.join(PROFILES_DIR, `error_${cacheKey}.png`);
+          await page.screenshot({ path: screenshotPath });
+          console.log(`[Playwright] Error screenshot saved to ${screenshotPath}`);
+        } catch (err: any) {
+          console.error('[Playwright] Failed to save error screenshot:', err.message);
+        }
+        reject(new Error(`Timeout waiting for Qwen headers for ${cacheKey}`));
+      }, config.timeouts.headers);
 
-      const extractedHeaders = {
-        'cookie': reqHeaders['cookie'] || '',
-        'bx-ua': reqHeaders['bx-ua'] || '',
-        'bx-umidtoken': reqHeaders['bx-umidtoken'] || '',
-        'bx-v': reqHeaders['bx-v'] || '',
-        'x-request-id': reqHeaders['x-request-id'] || '',
-        'user-agent': reqHeaders['user-agent'] || ''
+      console.log(`[Playwright] Setting up route interception for ${cacheKey}...`);
+      const routeHandler = async (route: any, request: any) => {
+        const reqHeaders = request.headers();
+        let uiSessionId = '';
+        let uiParentMessageId: string | null = null;
+
+        const postData = request.postData();
+        if (postData) {
+          try {
+            const payload = JSON.parse(postData);
+            if (payload.chat_id) {
+              uiSessionId = payload.chat_id;
+            }
+            if (payload.parent_id !== undefined) {
+              uiParentMessageId = payload.parent_id;
+            }
+          } catch { /* ignore parse errors */ }
+        }
+
+        const extractedHeaders = {
+          'cookie': reqHeaders['cookie'] || '',
+          'bx-ua': reqHeaders['bx-ua'] || '',
+          'bx-umidtoken': reqHeaders['bx-umidtoken'] || '',
+          'bx-v': reqHeaders['bx-v'] || '',
+          'x-request-id': reqHeaders['x-request-id'] || '',
+          'user-agent': reqHeaders['user-agent'] || ''
+        };
+
+        if (!extractedHeaders.cookie || !extractedHeaders['bx-ua']) {
+          console.log(`[Playwright] Intercepted request missing critical headers for ${cacheKey}, skipping...`);
+          await route.continue();
+          return;
+        }
+
+        clearTimeout(timeout);
+
+        console.log(`[Playwright] Successfully intercepted headers for ${cacheKey}.`);
+        cache.currentHeaders = extractedHeaders;
+        cache.cachedQwenHeaders = { headers: extractedHeaders, chatSessionId: uiSessionId, parentMessageId: uiParentMessageId };
+        cache.lastHeadersTime = Date.now();
+        cache.refreshInProgress = false;
+
+        import('./qwen.js').then(m => m.disableNativeTools(accountId).catch(() => {}));
+
+        await route.abort('aborted');
+
+        await page.unroute('**/api/v2/chat/completions*', routeHandler);
+
+        resolve(cache.cachedQwenHeaders);
       };
 
-      if (!extractedHeaders.cookie || !extractedHeaders['bx-ua']) {
-        console.log(`[Playwright] Intercepted request missing critical headers for ${cacheKey}, skipping...`);
-        await route.continue();
-        return;
-      }
+      page.route('**/api/v2/chat/completions*', routeHandler).then(async () => {
+        console.log(`[Playwright] Triggering request for ${cacheKey}...`);
+        const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
 
-      clearTimeout(timeout);
-
-      console.log(`[Playwright] Successfully intercepted headers for ${cacheKey}.`);
-      cache.currentHeaders = extractedHeaders;
-      cache.cachedQwenHeaders = { headers: extractedHeaders, chatSessionId: uiSessionId, parentMessageId: uiParentMessageId };
-      cache.lastHeadersTime = Date.now();
-      cache.refreshInProgress = false;
-
-      import('./qwen.js').then(m => m.disableNativeTools(accountId).catch(() => {}));
-
-      await route.abort('aborted');
-
-      await page.unroute('**/api/v2/chat/completions*', routeHandler);
-
-      resolve(cache.cachedQwenHeaders);
-    };
-
-    page.route('**/api/v2/chat/completions*', routeHandler).then(async () => {
-      console.log(`[Playwright] Triggering request for ${cacheKey}...`);
-      const inputSelector = 'textarea:visible, [contenteditable="true"]:visible';
-
-      await page.focus(inputSelector);
-      await page.fill(inputSelector, '');
-      await page.type(inputSelector, 'a', { delay: 100 });
-      console.log(`[Playwright] Typed char for ${cacheKey}, waiting for UI to update...`);
-      await sleep(2000);
-
-      const selectors = [
-        '.message-input-right-button-send .send-button',
-        '.chat-prompt-send-button',
-        'button.send-button'
-      ];
-
-      let clicked = false;
-      for (const selector of selectors) {
-        try {
-          const btn = await page.$(selector);
-          if (btn && await btn.isVisible()) {
-            console.log(`[Playwright] Attempting click on: ${selector}`);
-
-            await page.evaluate((sel) => {
-              const element = document.querySelector(sel) as HTMLElement;
-              if (element) {
-                element.focus();
-                element.click();
-              }
-            }, selector);
-
-            await btn.click({ force: true, delay: 50 }).catch(() => {});
-
-            clicked = true;
-            break;
-          }
-        } catch (e) {
-          console.error(`[Playwright] Error clicking ${selector} for ${cacheKey}:`, e);
-        }
-      }
-
-      if (!clicked) {
-        console.log(`[Playwright] No send button found/clicked for ${cacheKey}, fallback to Enter...`);
         await page.focus(inputSelector);
-        await page.keyboard.press('Enter');
-      }
+        await page.fill(inputSelector, '');
+        await page.type(inputSelector, 'a', { delay: 100 });
+        console.log(`[Playwright] Typed char for ${cacheKey}, waiting for UI to update...`);
+        await sleep(2000);
+
+        const selectors = [
+          '.message-input-right-button-send .send-button',
+          '.chat-prompt-send-button',
+          'button.send-button'
+        ];
+
+        let clicked = false;
+        for (const selector of selectors) {
+          try {
+            const btn = await page.$(selector);
+            if (btn && await btn.isVisible()) {
+              console.log(`[Playwright] Attempting click on: ${selector}`);
+
+              await page.evaluate((sel) => {
+                const element = document.querySelector(sel) as HTMLElement;
+                if (element) {
+                  element.focus();
+                  element.click();
+                }
+              }, selector);
+
+              await btn.click({ force: true, delay: 50 }).catch(() => {});
+
+              clicked = true;
+              break;
+            }
+          } catch (e) {
+            console.error(`[Playwright] Error clicking ${selector} for ${cacheKey}:`, e);
+          }
+        }
+
+        if (!clicked) {
+          console.log(`[Playwright] No send button found/clicked for ${cacheKey}, fallback to Enter...`);
+          await page.focus(inputSelector);
+          await page.keyboard.press('Enter');
+        }
+      });
     });
-  });
+  } finally {
+    watcher.stop();
+  }
 }

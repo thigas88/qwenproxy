@@ -1,6 +1,7 @@
 import type { Page } from 'playwright';
 import crypto from 'crypto';
 import { config } from '../core/config.js';
+import { startCaptchaWatcher } from './captcha-solver.js';
 
 const streamCallbacks = new Map<string, {
   onChunk: (chunk: string) => void;
@@ -43,32 +44,39 @@ export async function browserFetch(
   await ensureStreamBridge(page);
   const reqId = crypto.randomUUID();
 
-  return page.evaluate(async ({ url, options }: any) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 30000);
-    try {
-      const resp = await fetch(url, {
-        method: options.method || 'POST',
-        headers: options.headers || {},
-        body: options.body || undefined,
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      const respHeaders: Record<string, string> = {};
-      resp.headers.forEach((v: string, k: string) => { respHeaders[k] = v; });
-      const body = await resp.text();
-      return {
-        status: resp.status,
-        statusText: resp.statusText,
-        contentType: resp.headers.get('content-type') || '',
-        body,
-        headers: respHeaders,
-      };
-    } catch (e: any) {
-      clearTimeout(timeoutId);
-      throw new Error(`browserFetch failed: ${e.message}`, { cause: e });
-    }
-  }, { url, options, reqId });
+  const timeoutMs = options.timeoutMs || 30000;
+  const watcher = startCaptchaWatcher(page, timeoutMs);
+
+  try {
+    return await page.evaluate(async ({ url, options }: any) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 30000);
+      try {
+        const resp = await fetch(url, {
+          method: options.method || 'POST',
+          headers: options.headers || {},
+          body: options.body || undefined,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        const respHeaders: Record<string, string> = {};
+        resp.headers.forEach((v: string, k: string) => { respHeaders[k] = v; });
+        const body = await resp.text();
+        return {
+          status: resp.status,
+          statusText: resp.statusText,
+          contentType: resp.headers.get('content-type') || '',
+          body,
+          headers: respHeaders,
+        };
+      } catch (e: any) {
+        clearTimeout(timeoutId);
+        throw new Error(`browserFetch failed: ${e.message}`, { cause: e });
+      }
+    }, { url, options, reqId });
+  } finally {
+    watcher.stop();
+  }
 }
 
 export async function browserStreamFetch(
@@ -130,111 +138,117 @@ export async function browserStreamFetch(
   });
   bodyPromise.catch(() => {});
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const cb = streamCallbacks.get(reqId);
-      if (!cb) return;
-      cb.onChunk = (chunk: string) => {
-        try { controller.enqueue(enc.encode(chunk)); } catch { /* ignore */ }
-      };
-      cb.onEnd = () => {
-        try { controller.close(); } catch { /* ignore */ }
-        bodyResolve('');
-        streamCallbacks.delete(reqId);
-        abortControllers.delete(reqId);
-      };
-      cb.onError = (msg: string) => {
-        try { controller.error(new Error(msg)); } catch { /* ignore */ }
-        bodyReject(new Error(msg));
-        streamCallbacks.delete(reqId);
-        abortControllers.delete(reqId);
-      };
-      cb.onBody = (text: string) => {
-        bodyResolve(text);
-        streamCallbacks.delete(reqId);
-        abortControllers.delete(reqId);
-      };
+  const watcher = startCaptchaWatcher(page, metaTimeoutMs);
 
-      page.evaluate(async ({ url, options, reqId }: any) => {
-        const controller = new AbortController();
-        (window as any).__abortControllers = (window as any).__abortControllers || {};
-        (window as any).__abortControllers[reqId] = controller;
-        const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || config.timeouts.chat);
-        try {
-          const resp = await fetch(url, {
-            method: options.method || 'POST',
-            headers: options.headers || {},
-            body: options.body || undefined,
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-          const respHeaders: Record<string, string> = {};
-          resp.headers.forEach((v: string, k: string) => { respHeaders[k] = v; });
-          (window as any).__streamRelay(reqId, 'meta', {
-            status: resp.status,
-            statusText: resp.statusText,
-            contentType: resp.headers.get('content-type') || '',
-            headers: respHeaders,
-          });
-
-          if (!resp.ok || !resp.body) {
-            const bodyText = await resp.text();
-            (window as any).__streamRelay(reqId, 'body', bodyText);
-            delete (window as any).__abortControllers[reqId];
-            return;
-          }
-
-          const reader = resp.body.getReader();
-          const decoder = new TextDecoder();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              (window as any).__streamRelay(reqId, 'end', null);
-              break;
-            }
-            (window as any).__streamRelay(reqId, 'chunk', decoder.decode(value, { stream: true }));
-          }
-          delete (window as any).__abortControllers[reqId];
-        } catch (e: any) {
-          clearTimeout(timeoutId);
-          (window as any).__streamRelay(reqId, 'error', e.message);
-          delete (window as any).__abortControllers[reqId];
-        }
-      }, { url, options, reqId }).catch((e: any) => {
+  try {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
         const cb = streamCallbacks.get(reqId);
-        if (cb) {
-          cb.onError(e.message);
-        }
-      });
-    },
-    cancel() {
+        if (!cb) return;
+        cb.onChunk = (chunk: string) => {
+          try { controller.enqueue(enc.encode(chunk)); } catch { /* ignore */ }
+        };
+        cb.onEnd = () => {
+          try { controller.close(); } catch { /* ignore */ }
+          bodyResolve('');
+          streamCallbacks.delete(reqId);
+          abortControllers.delete(reqId);
+        };
+        cb.onError = (msg: string) => {
+          try { controller.error(new Error(msg)); } catch { /* ignore */ }
+          bodyReject(new Error(msg));
+          streamCallbacks.delete(reqId);
+          abortControllers.delete(reqId);
+        };
+        cb.onBody = (text: string) => {
+          bodyResolve(text);
+          streamCallbacks.delete(reqId);
+          abortControllers.delete(reqId);
+        };
+
+        page.evaluate(async ({ url, options, reqId }: any) => {
+          const controller = new AbortController();
+          (window as any).__abortControllers = (window as any).__abortControllers || {};
+          (window as any).__abortControllers[reqId] = controller;
+          const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || config.timeouts.chat);
+          try {
+            const resp = await fetch(url, {
+              method: options.method || 'POST',
+              headers: options.headers || {},
+              body: options.body || undefined,
+              signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            const respHeaders: Record<string, string> = {};
+            resp.headers.forEach((v: string, k: string) => { respHeaders[k] = v; });
+            (window as any).__streamRelay(reqId, 'meta', {
+              status: resp.status,
+              statusText: resp.statusText,
+              contentType: resp.headers.get('content-type') || '',
+              headers: respHeaders,
+            });
+
+            if (!resp.ok || !resp.body) {
+              const bodyText = await resp.text();
+              (window as any).__streamRelay(reqId, 'body', bodyText);
+              delete (window as any).__abortControllers[reqId];
+              return;
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                (window as any).__streamRelay(reqId, 'end', null);
+                break;
+              }
+              (window as any).__streamRelay(reqId, 'chunk', decoder.decode(value, { stream: true }));
+            }
+            delete (window as any).__abortControllers[reqId];
+          } catch (e: any) {
+            clearTimeout(timeoutId);
+            (window as any).__streamRelay(reqId, 'error', e.message);
+            delete (window as any).__abortControllers[reqId];
+          }
+        }, { url, options, reqId }).catch((e: any) => {
+          const cb = streamCallbacks.get(reqId);
+          if (cb) {
+            cb.onError(e.message);
+          }
+        });
+      },
+      cancel() {
+        page.evaluate((reqId: string) => {
+          const c = (window as any).__abortControllers?.[reqId];
+          if (c) { c.abort(); delete (window as any).__abortControllers[reqId]; }
+        }, reqId).catch(() => {});
+        streamCallbacks.delete(reqId);
+        abortControllers.delete(reqId);
+      },
+    });
+
+    const meta = await metaPromise;
+
+    const abortFn = () => {
       page.evaluate((reqId: string) => {
         const c = (window as any).__abortControllers?.[reqId];
         if (c) { c.abort(); delete (window as any).__abortControllers[reqId]; }
       }, reqId).catch(() => {});
       streamCallbacks.delete(reqId);
       abortControllers.delete(reqId);
-    },
-  });
+    };
 
-  const meta = await metaPromise;
+    abortControllers.set(reqId, abortFn);
 
-  const abortFn = () => {
-    page.evaluate((reqId: string) => {
-      const c = (window as any).__abortControllers?.[reqId];
-      if (c) { c.abort(); delete (window as any).__abortControllers[reqId]; }
-    }, reqId).catch(() => {});
-    streamCallbacks.delete(reqId);
-    abortControllers.delete(reqId);
-  };
-
-  abortControllers.set(reqId, abortFn);
-
-  return {
-    ...meta,
-    stream,
-    body: meta.contentType.includes('text/event-stream') ? '' : await bodyPromise,
-    reqId,
-    abort: abortFn,
-  };
+    return {
+      ...meta,
+      stream,
+      body: meta.contentType.includes('text/event-stream') ? '' : await bodyPromise,
+      reqId,
+      abort: abortFn,
+    };
+  } finally {
+    watcher.stop();
+  }
 }

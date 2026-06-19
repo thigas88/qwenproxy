@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Page } from 'playwright';
+import type { Browser, BrowserContext, BrowserContextOptions, Page } from 'playwright';
 import { chromium, firefox, webkit } from 'playwright';
 import path from 'path';
 import fs from 'fs';
@@ -34,6 +34,45 @@ export interface AccountHeaderCache {
 
 export const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
 export const CHROME_CLIENT_HINTS = '"Chromium";v="137", "Google Chrome";v="137", "Not/A)Brand";v="99"';
+export const BROWSER_VIEWPORT = { width: 1366, height: 768 };
+export const BROWSER_LOCALE = 'pt-BR';
+export const BROWSER_TIMEZONE = 'America/Sao_Paulo';
+
+function getBrowserLaunchArgs(): string[] {
+  return Array.from(new Set([
+    ...config.browser.args,
+    '--disable-blink-features=AutomationControlled',
+    '--disable-features=IsolateOrigins,site-per-process',
+    '--disable-infobars',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--enable-webgl',
+    '--ignore-gpu-blocklist',
+    '--enable-accelerated-2d-canvas',
+  ]));
+}
+
+export function sharedContextOptions(): BrowserContextOptions {
+  return {
+    userAgent: config.browser.userAgent,
+    locale: BROWSER_LOCALE,
+    timezoneId: BROWSER_TIMEZONE,
+    viewport: BROWSER_VIEWPORT,
+    deviceScaleFactor: 1,
+    isMobile: false,
+    hasTouch: false,
+    colorScheme: 'light',
+    ignoreHTTPSErrors: true,
+    extraHTTPHeaders: {
+      ...config.browser.headers,
+      'sec-ch-ua': CHROME_CLIENT_HINTS,
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+    },
+  };
+}
 
 export const HEADERS_TTL = 5 * 60 * 1000;
 export const COOKIE_CACHE_TTL = 5 * 60 * 1000;
@@ -136,13 +175,7 @@ export async function getOrLaunchBrowser(browserType: BrowserType = 'chromium'):
     headless: config.browser.headless,
     channel,
     ignoreDefaultArgs: ['--enable-automation'],
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-infobars',
-      '--no-first-run',
-      '--no-default-browser-check',
-    ],
+    args: getBrowserLaunchArgs(),
   });
   browser.on('disconnected', () => { browser = null; });
   return browser;
@@ -381,8 +414,7 @@ export async function initPlaywright(_headless = true, browserType: BrowserType 
 
   const storageState = loadStorageState('_default');
   context = await sharedBrowser.newContext({
-    userAgent: CHROME_UA,
-    ignoreHTTPSErrors: true,
+    ...sharedContextOptions(),
     ...(storageState ? { storageState } : {}),
   });
 
@@ -443,8 +475,7 @@ export async function initPlaywrightForAccount(account: QwenAccount, _headless =
 
   const storageState = loadStorageState(account.id);
   const acctContext = await sharedBrowser.newContext({
-    userAgent: CHROME_UA,
-    ignoreHTTPSErrors: true,
+    ...sharedContextOptions(),
     ...(storageState ? { storageState } : {}),
   });
 
@@ -490,19 +521,12 @@ export async function launchManualLoginAccount(accountId: string, browserType: B
     headless: false,
     channel,
     ignoreDefaultArgs: ['--enable-automation'],
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-infobars',
-      '--no-first-run',
-      '--no-default-browser-check',
-    ],
+    args: getBrowserLaunchArgs(),
   });
 
   const storageState = loadStorageState(accountId);
   const acctContext = await manualBrowser.newContext({
-    userAgent: CHROME_UA,
-    ignoreHTTPSErrors: true,
+    ...sharedContextOptions(),
     ...(storageState ? { storageState } : {}),
   });
 
