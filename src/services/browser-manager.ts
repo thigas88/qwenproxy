@@ -150,8 +150,50 @@ export function storageStatePath(accountId: string): string {
 
 export function loadStorageState(accountId: string): string | undefined {
   const p = storageStatePath(accountId);
-  if (fs.existsSync(p)) return p;
-  return undefined;
+  if (!fs.existsSync(p)) return undefined;
+
+  try {
+    const raw = fs.readFileSync(p, 'utf8');
+    const state = JSON.parse(raw);
+    if (!state || typeof state !== 'object') {
+      console.warn(`[Playwright] Invalid storageState structure for ${accountId}, discarding.`);
+      fs.rmSync(p, { force: true });
+      return undefined;
+    }
+    if (!Array.isArray(state.cookies)) {
+      console.warn(`[Playwright] StorageState for ${accountId} missing cookies array, discarding.`);
+      fs.rmSync(p, { force: true });
+      return undefined;
+    }
+    if (!Array.isArray(state.origins)) {
+      state.origins = [];
+    }
+
+    const now = Date.now();
+    const validCookies = state.cookies.filter((c: any) => {
+      if (!c || !c.name || !c.value) return false;
+      if (c.expires && c.expires > 0 && c.expires * 1000 < now) return false;
+      return true;
+    });
+
+    if (validCookies.length === 0) {
+      console.warn(`[Playwright] StorageState for ${accountId} has no valid cookies, discarding.`);
+      fs.rmSync(p, { force: true });
+      return undefined;
+    }
+
+    if (validCookies.length !== state.cookies.length) {
+      console.log(`[Playwright] Pruned ${state.cookies.length - validCookies.length} expired cookies for ${accountId}.`);
+      state.cookies = validCookies;
+      fs.writeFileSync(p, JSON.stringify(state, null, 2));
+    }
+
+    return p;
+  } catch (err: any) {
+    console.warn(`[Playwright] Failed to read storageState for ${accountId}: ${err.message}. Discarding.`);
+    try { fs.rmSync(p, { force: true }); } catch { /* ignore */ }
+    return undefined;
+  }
 }
 
 export async function saveStorageState(ctx: BrowserContext, accountId: string): Promise<void> {
@@ -192,11 +234,17 @@ export async function getOrLaunchBrowser(browserType: BrowserType = 'chromium'):
   if (browser?.isConnected()) return browser;
   const { engine, channel } = resolveBrowserEngine(browserType);
   console.log(`[Playwright] Launching shared ${browserType} browser...`);
+
+  const launchArgs = getBrowserLaunchArgs();
+  if (config.browser.headless && !launchArgs.includes('--headless=new')) {
+    launchArgs.push('--headless=new');
+  }
+
   browser = await engine.launch({
-    headless: config.browser.headless,
+    headless: false,
     channel,
-    ignoreDefaultArgs: ['--enable-automation'],
-    args: getBrowserLaunchArgs(),
+    ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features'],
+    args: launchArgs,
   });
   browser.on('disconnected', () => { browser = null; });
   return browser;

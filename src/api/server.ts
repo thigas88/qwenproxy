@@ -81,17 +81,23 @@ export async function startServer(): Promise<void> {
   await initPlaywright(config.browser.headless)
   
   if (accounts.length > 0) {
-    console.log(`[Server] Pre-warming ${accounts.length} configured account(s) in parallel...`)
+    console.log(`[Server] Pre-warming ${accounts.length} configured account(s) sequentially...`)
     const { getAccountCredentials } = await import('../core/accounts.js')
-    await Promise.all(
-      accounts.map(account => {
-        const creds = getAccountCredentials(account.id)
-        if (!creds) return Promise.resolve()
-        return initPlaywrightForAccount(creds, config.browser.headless).catch((err: any) => {
-          console.error(`[Server] Failed to initialize account ${account.email}:`, err.message)
-        })
-      })
-    )
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i]
+      const creds = getAccountCredentials(account.id)
+      if (!creds) continue
+      try {
+        await initPlaywrightForAccount(creds, config.browser.headless)
+      } catch (err: any) {
+        console.error(`[Server] Failed to initialize account ${account.email}:`, err.message)
+      }
+      if (i < accounts.length - 1) {
+        const stagger = 1500 + Math.floor(Math.random() * 2000)
+        console.log(`[Server] Staggering ${stagger}ms before next account...`)
+        await new Promise(r => setTimeout(r, stagger))
+      }
+    }
     console.log('[Server] Pre-fetching headers for all accounts in background...')
     const { warmAllPools } = await import('../services/qwen.js')
     warmAllPools(accounts.map(a => a.id)).catch(() => {})
