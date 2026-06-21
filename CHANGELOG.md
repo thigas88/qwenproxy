@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.9.0...v1.10.0) (2026-06-21)
+
+
+### Features
+
+* add session keep-alive to prevent captcha after inactivity ([efb2183](https://github.com/pedrofariasx/qwenproxy/commit/efb2183ad3bba5c7fac497988f712f163b510c9a))
+
 # [1.9.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.8.0...v1.9.0) (2026-06-21)
 
 
