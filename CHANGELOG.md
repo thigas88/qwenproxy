@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/pedrofariasx/qwenproxy/compare/v1.12.0...v1.12.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* keep qwen lanes on stable page ([1458070](https://github.com/pedrofariasx/qwenproxy/commit/14580709e02a91c426df666307c7411bb601238c))
+
 # [1.12.0](https://github.com/pedrofariasx/qwenproxy/compare/v1.11.0...v1.12.0) (2026-06-22)
 
 
