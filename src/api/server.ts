@@ -14,6 +14,26 @@ const app = new Hono()
 let watchdog: Watchdog
 let server: any
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+function randomDelay(minMs: number, maxMs: number): number {
+  const min = Math.max(0, Math.min(minMs, maxMs))
+  const max = Math.max(min, maxMs)
+  return min + Math.floor(Math.random() * (max - min + 1))
+}
+
+async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<void>): Promise<void> {
+  const limit = Math.max(1, concurrency)
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++
+      await worker(items[index], index)
+    }
+  })
+  await Promise.all(runners)
+}
+
 app.use('*', async (c, next) => {
   metrics.increment('requests.total')
   const start = Date.now()
@@ -81,26 +101,37 @@ export async function startServer(): Promise<void> {
   await initPlaywright(config.browser.headless)
   
   if (accounts.length > 0) {
-    console.log(`[Server] Pre-warming ${accounts.length} configured account(s) sequentially...`)
+    console.log(`[Server] Initializing ${accounts.length} configured account(s) with concurrency ${config.accounts.initConcurrency}...`)
     const { getAccountCredentials } = await import('../core/accounts.js')
-    for (let i = 0; i < accounts.length; i++) {
-      const account = accounts[i]
+    await runWithConcurrency(accounts, config.accounts.initConcurrency, async (account, i) => {
       const creds = getAccountCredentials(account.id)
-      if (!creds) continue
+      if (!creds) return
+      const stagger = i === 0 ? 0 : randomDelay(config.accounts.initStaggerMinMs, config.accounts.initStaggerMaxMs)
+      if (stagger > 0) await sleep(stagger)
       try {
         await initPlaywrightForAccount(creds, config.browser.headless)
       } catch (err: any) {
         console.error(`[Server] Failed to initialize account ${account.email}:`, err.message)
       }
-      if (i < accounts.length - 1) {
-        const stagger = 1500 + Math.floor(Math.random() * 2000)
-        console.log(`[Server] Staggering ${stagger}ms before next account...`)
-        await new Promise(r => setTimeout(r, stagger))
-      }
+    })
+    if (config.precapture.headersStartup) {
+      console.log(`[Server] Pre-capturing Qwen headers with concurrency ${config.precapture.concurrency}...`)
+      const { getQwenHeaders } = await import('../services/playwright.js')
+      runWithConcurrency(accounts, config.precapture.concurrency, async (account, i) => {
+        const stagger = i === 0 ? 0 : randomDelay(config.precapture.staggerMinMs, config.precapture.staggerMaxMs)
+        if (stagger > 0) await sleep(stagger)
+        try {
+          await getQwenHeaders(false, account.id)
+        } catch (err: any) {
+          console.warn(`[Server] Header pre-capture failed for ${account.email}:`, err.message)
+        }
+      }).catch(() => {})
     }
-    console.log('[Server] Pre-fetching headers for all accounts in background...')
-    const { warmAllPools } = await import('../services/qwen.js')
-    warmAllPools(accounts.map(a => a.id)).catch(() => {})
+    if (config.warmPool.startup) {
+      console.log('[Server] Pre-fetching warm chats for all accounts in background...')
+      const { warmAllPools } = await import('../services/qwen.js')
+      warmAllPools(accounts.map(a => a.id)).catch(() => {})
+    }
   }
 
   const { startSessionKeeper } = await import('../services/session-keeper.js')

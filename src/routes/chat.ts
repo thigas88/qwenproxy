@@ -14,6 +14,7 @@ import {
   selectCandidateTools,
   buildCompactToolManifest,
   buildToolCallContract,
+  getToolChoiceMode,
 } from './tool-handler.js';
 import { handleStreamingResponse, handleNonStreamingResponse } from './stream-handler.js';
 
@@ -104,7 +105,9 @@ export async function chatCompletions(c: Context) {
     }
 
     const bodyAny = body as any;
-    if (bodyAny.tools && Array.isArray(bodyAny.tools) && bodyAny.tools.length > 0) {
+    const hasTools = Array.isArray(bodyAny.tools) && bodyAny.tools.length > 0;
+    const toolChoiceMode = getToolChoiceMode(bodyAny.tool_choice);
+    if (hasTools && toolChoiceMode !== 'none') {
       const formattedTools = bodyAny.tools.map((t: any) => {
         if (t.type === 'function') {
           return {
@@ -128,9 +131,8 @@ export async function chatCompletions(c: Context) {
     const modelId = body.model.replace('-no-thinking', '');
     const modelContextWindow = getModelContextWindow(modelId)
     const estimatedTokens = estimateTokenCount(systemPrompt + prompt, modelId);
-    const hasTools = Array.isArray(bodyAny.tools) && bodyAny.tools.length > 0;
     const forcedToolName = getForcedToolName(bodyAny.tool_choice);
-    const parallelToolCalls = bodyAny.parallel_tool_calls !== false;
+    const parallelToolCalls = bodyAny.parallel_tool_calls !== false && toolChoiceMode !== 'forced';
     const toolContextText = `${systemPrompt}\n${prompt}`;
     const recentToolNames = hasTools ? getRecentToolNames(messages) : new Set<string>();
     const candidateTools = hasTools ? selectCandidateTools(bodyAny.tools, toolContextText, forcedToolName, recentToolNames) : [];
@@ -144,7 +146,11 @@ export async function chatCompletions(c: Context) {
       finalPrompt = systemPrompt ? `${systemPrompt}\n${prompt}` : prompt;
     }
 
-    if (hasTools) {
+    if (hasTools && toolChoiceMode === 'none') {
+      finalPrompt += '\n\n[TOOL USE DISABLED]\nDo not call tools in this response. Answer directly using available context.';
+    }
+
+    if (hasTools && toolChoiceMode !== 'none') {
       const compactManifest = buildCompactToolManifest(candidateTools, forcedToolName);
       const toolContract = buildToolCallContract(candidateTools, forcedToolName, parallelToolCalls);
       finalPrompt += `\n\n${toolContract}`;
@@ -314,7 +320,7 @@ export async function chatCompletions(c: Context) {
     }
 
     if (!isStream) {
-      return handleNonStreamingResponse(c, stream!, completionId, body.model, uiSessionId, hasTools, bodyAny.tools || []);
+      return handleNonStreamingResponse(c, stream!, completionId, body.model, uiSessionId, hasTools && toolChoiceMode !== 'none', bodyAny.tools || []);
     }
 
     return handleStreamingResponse(c, {
@@ -322,7 +328,7 @@ export async function chatCompletions(c: Context) {
       completionId,
       model: body.model,
       uiSessionId,
-      hasTools,
+      hasTools: hasTools && toolChoiceMode !== 'none',
       tools: bodyAny.tools || [],
       finalPrompt,
       streamOptions: body.stream_options

@@ -51,6 +51,27 @@ export function handleStreamingResponse(c: Context, ctx: StreamHandlerContext): 
         finish_reason: finishReason
       });
 
+      const emittedStreamingToolIds = new Set<string>();
+
+      const emitStreamingToolCall = (tc: { id: string; name: string; arguments: Record<string, unknown> }, index: number) => {
+        if (emittedStreamingToolIds.has(tc.id)) return;
+        emittedStreamingToolIds.add(tc.id);
+        streamWriter.write(`data: ${JSON.stringify({
+          id: ctx.completionId,
+          object: 'chat.completion.chunk',
+          created: createdTimestamp,
+          model: ctx.model,
+          choices: [makeChoice({
+            tool_calls: [{
+              index,
+              id: tc.id,
+              type: 'function',
+              function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
+            }]
+          })]
+        })}\n\n`);
+      };
+
       const createdTimestamp = Math.floor(Date.now() / 1000);
 
       const fastWriteContent = (content: string) => {
@@ -170,40 +191,14 @@ export function handleStreamingResponse(c: Context, ctx: StreamHandlerContext): 
                       const baseIndex = toolParser.getEmittedToolCallCount();
                       for (let idx = 0; idx < unwrappedToolCalls.length; idx++) {
                         const tc = unwrappedToolCalls[idx];
-                        streamWriter.write(`data: ${JSON.stringify({
-                          id: ctx.completionId,
-                          object: 'chat.completion.chunk',
-                          created: createdTimestamp,
-                          model: ctx.model,
-                          choices: [makeChoice({
-                            tool_calls: [{
-                              index: baseIndex + idx,
-                              id: tc.id,
-                              type: 'function',
-                              function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
-                            }]
-                          })]
-                        })}\n\n`);
+                        emitStreamingToolCall(tc, baseIndex + idx);
                       }
                     } else {
                       fastWriteContent(text);
                     }
                   }
                   for (const tc of toolCalls) {
-                    streamWriter.write(`data: ${JSON.stringify({
-                      id: ctx.completionId,
-                      object: 'chat.completion.chunk',
-                      created: createdTimestamp,
-                      model: ctx.model,
-                      choices: [makeChoice({
-                        tool_calls: [{
-                          index: toolParser.getEmittedToolCallCount() - toolCalls.length + toolCalls.indexOf(tc),
-                          id: tc.id,
-                          type: 'function',
-                          function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
-                        }]
-                      })]
-                    })}\n\n`);
+                    emitStreamingToolCall(tc, toolParser.getEmittedToolCallCount() - toolCalls.length + toolCalls.indexOf(tc));
                   }
                 } else {
                   if (vStr) fastWriteContent(vStr);
@@ -251,20 +246,7 @@ export function handleStreamingResponse(c: Context, ctx: StreamHandlerContext): 
             const baseIndex = toolParser.getEmittedToolCallCount();
             for (let idx = 0; idx < unwrappedToolCalls.length; idx++) {
               const tc = unwrappedToolCalls[idx];
-              writeEvent({
-                id: ctx.completionId,
-                object: 'chat.completion.chunk',
-                created: createdTimestamp,
-                model: ctx.model,
-                choices: [makeChoice({
-                  tool_calls: [{
-                    index: baseIndex + idx,
-                    id: tc.id,
-                    type: 'function',
-                    function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
-                  }]
-                })]
-              });
+              emitStreamingToolCall(tc, baseIndex + idx);
             }
           } else {
             writeEvent({
@@ -278,20 +260,7 @@ export function handleStreamingResponse(c: Context, ctx: StreamHandlerContext): 
         }
         for (const tc of flushResult.toolCalls) {
           const idx = toolParser.getEmittedToolCallCount() - flushResult.toolCalls.length + flushResult.toolCalls.indexOf(tc);
-          writeEvent({
-            id: ctx.completionId,
-            object: 'chat.completion.chunk',
-            created: createdTimestamp,
-            model: ctx.model,
-            choices: [makeChoice({
-              tool_calls: [{
-                index: idx,
-                id: tc.id,
-                type: 'function',
-                function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
-              }]
-            })]
-          });
+          emitStreamingToolCall(tc, idx);
         }
       }
 
@@ -344,17 +313,24 @@ export function handleNonStreamingResponse(
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     const toolCallsOut: any[] = [];
+    const seenToolCallIds = new Set<string>();
     let buffer = '';
+
+    const pushToolCall = (tc: { id: string; name: string; arguments: Record<string, unknown> }) => {
+      if (seenToolCallIds.has(tc.id)) return;
+      seenToolCallIds.add(tc.id);
+      toolCallsOut.push({
+        id: tc.id,
+        type: 'function',
+        function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
+      });
+    };
 
     const qwenParser = new QwenStreamParser(uiSessionId, {
       tools: hasTools ? tools : [],
       onThinking: () => {},
       onToolCall: (tc) => {
-        toolCallsOut.push({
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
-        });
+        pushToolCall(tc);
       },
     });
 
@@ -384,20 +360,12 @@ export function handleNonStreamingResponse(
     let finalContent = parserState.lastFullContent;
     if (remainingText) finalContent += remainingText;
     for (const tc of remainingToolCalls) {
-      toolCallsOut.push({
-        id: tc.id,
-        type: 'function',
-        function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
-      });
+      pushToolCall(tc);
     }
 
     if (hasTools && toolCallsOut.length === 0) {
       for (const tc of parseUnwrappedToolCalls(finalContent)) {
-        toolCallsOut.push({
-          id: tc.id,
-          type: 'function',
-          function: { name: tc.name, arguments: JSON.stringify(tc.arguments) }
-        });
+        pushToolCall(tc);
       }
       if (toolCallsOut.length > 0) finalContent = '';
     }

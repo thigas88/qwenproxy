@@ -101,4 +101,11 @@ export interface ToolCallResult {
   name: string;
   result: string;
   isError: boolean;
+  errorType?: 'unknown_tool' | 'validation_error' | 'execution_error' | 'timeout';
+  durationMs?: number;
+}
+
+export interface ToolExecutionOptions {
+  parallel?: boolean;
+  timeoutMs?: number;
 }

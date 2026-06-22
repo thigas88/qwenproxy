@@ -2,7 +2,7 @@ import { getBasicHeaders, getPageForAccount, browserFetch } from './playwright.j
 import { markAccountRateLimited } from '../core/account-manager.js';
 import { config } from '../core/config.js';
 import { QwenUpstreamError } from './error-handler.js';
-import { CHROME_CLIENT_HINTS } from './browser-manager.js';
+import { getClientHintsHeaders } from './browser-manager.js';
 import crypto from 'crypto';
 
 const CACHED_TIMEZONE = new Date().toString().split(' (')[0];
@@ -22,9 +22,9 @@ const inFlightWarmChats = new Set<string>();
 
 const refillPromises: Map<string, Promise<void>> = new Map();
 
-const WARM_POOL_SIZE = 10;
-const WARM_POOL_TTL_MS = 10 * 60 * 1000;
-const WARM_POOL_LOW_WATER = 3;
+const WARM_POOL_SIZE = config.warmPool.size;
+const WARM_POOL_TTL_MS = config.warmPool.ttlMs;
+const WARM_POOL_LOW_WATER = config.warmPool.lowWater;
 
 function cleanupStalePool(accountId: string) {
   const pool = warmPool.get(accountId);
@@ -50,26 +50,25 @@ function isWarmChatInFlight(accountId: string, chatId: string) {
   return inFlightWarmChats.has(warmChatKey(accountId, chatId));
 }
 
-function getClientHintsHeaders(): Record<string, string> {
-  return {
-    'sec-ch-ua': CHROME_CLIENT_HINTS,
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
-
 async function getBasicQwenHeaders(accountId?: string): Promise<Record<string, string>> {
   const { cookie, userAgent, bxV, bxUa, bxUmidtoken } = await getBasicHeaders(accountId);
+  if (!cookie || !userAgent || !bxV || !bxUa || !bxUmidtoken) {
+    throw new Error('Missing required browser anti-bot headers for warm pool');
+  }
   return {
     cookie,
     'user-agent': userAgent,
     'bx-v': bxV,
-    'bx-ua': bxUa || '',
-    'bx-umidtoken': bxUmidtoken || '',
+    'bx-ua': bxUa,
+    'bx-umidtoken': bxUmidtoken,
   };
 }
 
 async function createRealQwenChat(header: Record<string, string>, accountId?: string): Promise<string> {
+  if (process.env.TEST_MOCK_PLAYWRIGHT) {
+    return process.env.TEST_SESSION_ID || `mock-chat-${crypto.randomUUID()}`;
+  }
+
   const page = getPageForAccount(accountId);
   const body = JSON.stringify({
     title: 'Nova Conversa',
@@ -117,7 +116,7 @@ async function createRealQwenChat(header: Record<string, string>, accountId?: st
       return chatId;
     } catch (err: any) {
       if (err instanceof QwenUpstreamError) throw err;
-      console.warn('[WarmPool] browserFetch failed for chat creation, falling back to Node.js fetch:', err.message);
+      throw new Error(`Browser chat creation failed with active Qwen page: ${err.message}`, { cause: err });
     }
   }
 
@@ -133,9 +132,9 @@ async function createRealQwenChat(header: Record<string, string>, accountId?: st
       'user-agent': header['user-agent'],
       'x-request-id': crypto.randomUUID(),
       'bx-v': header['bx-v'],
-      'bx-ua': header['bx-ua'] || '',
-      'bx-umidtoken': header['bx-umidtoken'] || '',
-      ...getClientHintsHeaders(),
+      'bx-ua': header['bx-ua'],
+      'bx-umidtoken': header['bx-umidtoken'],
+      ...getClientHintsHeaders(accountId),
     },
     body,
     signal: AbortSignal.timeout(config.timeouts.http),
@@ -163,6 +162,8 @@ async function createRealQwenChat(header: Record<string, string>, accountId?: st
 }
 
 async function fetchUnusedChats(headers: Record<string, string>, accountId?: string): Promise<string[]> {
+  if (process.env.TEST_MOCK_PLAYWRIGHT) return [];
+
   const page = getPageForAccount(accountId);
   const url = 'https://chat.qwen.ai/api/v2/chats/?page=1&exclude_project=true';
   const reqHeaders: Record<string, string> = {
@@ -184,7 +185,8 @@ async function fetchUnusedChats(headers: Record<string, string>, accountId?: str
         body = result.body;
       }
     } catch (err: any) {
-      console.warn('[WarmPool] browserFetch failed for chat list, falling back:', err.message);
+      console.warn('[WarmPool] browserFetch failed for chat list with active Qwen page:', err.message);
+      return [];
     }
   }
 
@@ -198,11 +200,11 @@ async function fetchUnusedChats(headers: Record<string, string>, accountId?: str
         'user-agent': headers['user-agent'],
         'x-request-id': crypto.randomUUID(),
         'bx-v': headers['bx-v'],
-        'bx-ua': headers['bx-ua'] || '',
-        'bx-umidtoken': headers['bx-umidtoken'] || '',
+        'bx-ua': headers['bx-ua'],
+        'bx-umidtoken': headers['bx-umidtoken'],
         'timezone': CACHED_TIMEZONE,
         'source': 'web',
-        ...getClientHintsHeaders(),
+        ...getClientHintsHeaders(accountId),
       },
       signal: AbortSignal.timeout(config.timeouts.http),
     });
@@ -286,6 +288,15 @@ async function refillPoolForAccount(accountId: string) {
 }
 
 export async function getWarmedChat(accountId?: string) {
+  if (WARM_POOL_SIZE <= 0) {
+    const acctId = accountId === 'global' ? undefined : accountId;
+    const headers = await getBasicQwenHeaders(acctId);
+    const chatId = await createRealQwenChat(headers, acctId);
+    const key = accountId || 'global';
+    markWarmChatInFlight(key, chatId);
+    return { chatId, headers, accountId: key, timestamp: Date.now() };
+  }
+
   const key = accountId || 'global';
   let pool = warmPool.get(key);
   if (!pool) { pool = []; warmPool.set(key, pool); }
@@ -315,5 +326,6 @@ export async function getWarmedChat(accountId?: string) {
 }
 
 export async function warmAllPools(accountIds: string[]) {
+  if (!config.warmPool.startup || WARM_POOL_SIZE <= 0) return;
   for (const id of accountIds) refillPoolForAccount(id).catch(() => {});
 }

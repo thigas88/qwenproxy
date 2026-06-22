@@ -167,3 +167,23 @@ test('StreamingToolParser: handles literal close tag in streamed chunks', () => 
   assert.strictEqual(res.toolCalls.length, 1, 'Should parse across chunk boundaries');
   assert.strictEqual(res.toolCalls[0].name, 'edit');
 });
+
+test('StreamingToolParser: parses consecutive JSON objects in one block', () => {
+  const parser = new StreamingToolParser();
+  const input = `${TC_OPEN}{"name":"one","arguments":{"a":1}}
+{"name":"two","arguments":{"b":2}}${TC_CLOSE}`;
+  const res = parser.feed(input);
+  assert.strictEqual(res.toolCalls.length, 2);
+  assert.strictEqual(res.toolCalls[0].name, 'one');
+  assert.strictEqual(res.toolCalls[1].name, 'two');
+});
+
+test('StreamingToolParser: parses OpenAI-style tool_calls wrapper', () => {
+  const parser = new StreamingToolParser();
+  const input = `${TC_OPEN}{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{\\"query\\":\\"abc\\"}"}}]}${TC_CLOSE}`;
+  const res = parser.feed(input);
+  assert.strictEqual(res.toolCalls.length, 1);
+  assert.strictEqual(res.toolCalls[0].id, 'call_a');
+  assert.strictEqual(res.toolCalls[0].name, 'lookup');
+  assert.deepStrictEqual(res.toolCalls[0].arguments, { query: 'abc' });
+});

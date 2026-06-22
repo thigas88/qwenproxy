@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import type { QwenAccount } from '../core/accounts.js';
 import { config } from '../core/config.js';
 import { getStealthScript } from './stealth.js';
-import { getFingerprintProfile } from './fingerprint.js';
+import { getFingerprintProfile, type FingerprintProfile } from './fingerprint.js';
 
 export type BrowserType = 'chromium' | 'firefox' | 'webkit' | 'chrome' | 'edge';
 
@@ -39,6 +39,25 @@ export const BROWSER_VIEWPORT = { width: 1366, height: 768 };
 export const BROWSER_LOCALE = 'pt-BR';
 export const BROWSER_TIMEZONE = 'America/Sao_Paulo';
 
+export function getBrowserIdentity(accountId?: string): { userAgent: string; secChUa: string; platform: string; profile?: FingerprintProfile } {
+  const profile = accountId ? getFingerprintProfile(accountId) : undefined;
+  return {
+    userAgent: profile?.userAgent || CHROME_UA,
+    secChUa: profile?.secChUa || CHROME_CLIENT_HINTS,
+    platform: profile?.platform || 'Windows',
+    profile,
+  };
+}
+
+export function getClientHintsHeaders(accountId?: string): Record<string, string> {
+  const identity = getBrowserIdentity(accountId);
+  return {
+    'sec-ch-ua': identity.secChUa,
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': `"${identity.platform}"`,
+  };
+}
+
 function getBrowserLaunchArgs(): string[] {
   return Array.from(new Set([
     ...config.browser.args,
@@ -56,10 +75,12 @@ function getBrowserLaunchArgs(): string[] {
 }
 
 export function sharedContextOptions(accountId?: string): BrowserContextOptions {
-  if (accountId) {
-    const profile = getFingerprintProfile(accountId);
+  const identity = getBrowserIdentity(accountId);
+
+  if (accountId && identity.profile) {
+    const profile = identity.profile;
     return {
-      userAgent: profile.userAgent,
+      userAgent: identity.userAgent,
       locale: BROWSER_LOCALE,
       timezoneId: BROWSER_TIMEZONE,
       viewport: profile.viewport,
@@ -70,14 +91,12 @@ export function sharedContextOptions(accountId?: string): BrowserContextOptions 
       ignoreHTTPSErrors: true,
       extraHTTPHeaders: {
         ...config.browser.headers,
-        'sec-ch-ua': profile.secChUa,
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': `"${profile.platform}"`,
+        ...getClientHintsHeaders(accountId),
       },
     };
   }
   return {
-    userAgent: CHROME_UA,
+    userAgent: identity.userAgent,
     locale: BROWSER_LOCALE,
     timezoneId: BROWSER_TIMEZONE,
     viewport: BROWSER_VIEWPORT,
@@ -88,14 +107,12 @@ export function sharedContextOptions(accountId?: string): BrowserContextOptions 
     ignoreHTTPSErrors: true,
     extraHTTPHeaders: {
       ...config.browser.headers,
-      'sec-ch-ua': CHROME_CLIENT_HINTS,
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
+      ...getClientHintsHeaders(accountId),
     },
   };
 }
 
-export const HEADERS_TTL = 5 * 60 * 1000;
+export const HEADERS_TTL = config.headers.ttlMs;
 export const COOKIE_CACHE_TTL = 5 * 60 * 1000;
 export const REFRESH_THRESHOLD = 0.7;
 export const GUEST_HEADERS_TTL = 30 * 60 * 1000;
@@ -236,12 +253,9 @@ export async function getOrLaunchBrowser(browserType: BrowserType = 'chromium'):
   console.log(`[Playwright] Launching shared ${browserType} browser...`);
 
   const launchArgs = getBrowserLaunchArgs();
-  if (config.browser.headless && !launchArgs.includes('--headless=new')) {
-    launchArgs.push('--headless=new');
-  }
 
   browser = await engine.launch({
-    headless: false,
+    headless: config.browser.headless,
     channel,
     ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features'],
     args: launchArgs,

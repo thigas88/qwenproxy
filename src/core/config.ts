@@ -27,6 +27,20 @@ const envSchema = z.object({
   QWEN_HTTP_ENDPOINT: z.string().default('https://api.qwen.ai/v1/chat'),
   QWEN_API_KEY: z.string().default(''),
   API_KEY: z.string().default(''),
+  HEADERS_TTL_MS: z.string().default('1800000'),
+  BACKGROUND_HEADER_REFRESH: z.string().default('false'),
+  WARM_POOL_SIZE: z.string().default('0'),
+  WARM_POOL_LOW_WATER: z.string().default('0'),
+  WARM_POOL_TTL_MS: z.string().default('600000'),
+  WARM_POOL_STARTUP: z.string().default('false'),
+  SESSION_KEEPER_ENABLED: z.string().default('false'),
+  ACCOUNT_INIT_CONCURRENCY: z.string().default('2'),
+  ACCOUNT_INIT_STAGGER_MIN_MS: z.string().default('300'),
+  ACCOUNT_INIT_STAGGER_MAX_MS: z.string().default('900'),
+  PRECAPTURE_HEADERS_STARTUP: z.string().default('false'),
+  PRECAPTURE_HEADERS_CONCURRENCY: z.string().default('1'),
+  PRECAPTURE_HEADERS_STAGGER_MIN_MS: z.string().default('2500'),
+  PRECAPTURE_HEADERS_STAGGER_MAX_MS: z.string().default('5000'),
 })
 
 const env = envSchema.parse(process.env)
@@ -89,6 +103,30 @@ export const config = {
     baseUrl: env.QWEN_BASE_URL,
     httpEndpoint: env.QWEN_HTTP_ENDPOINT,
     apiKey: env.QWEN_API_KEY,
+  },
+  headers: {
+    ttlMs: parseInt(env.HEADERS_TTL_MS),
+    backgroundRefresh: env.BACKGROUND_HEADER_REFRESH === 'true',
+  },
+  warmPool: {
+    size: parseInt(env.WARM_POOL_SIZE),
+    lowWater: parseInt(env.WARM_POOL_LOW_WATER),
+    ttlMs: parseInt(env.WARM_POOL_TTL_MS),
+    startup: env.WARM_POOL_STARTUP === 'true',
+  },
+  sessionKeeper: {
+    enabled: env.SESSION_KEEPER_ENABLED === 'true',
+  },
+  accounts: {
+    initConcurrency: parseInt(env.ACCOUNT_INIT_CONCURRENCY),
+    initStaggerMinMs: parseInt(env.ACCOUNT_INIT_STAGGER_MIN_MS),
+    initStaggerMaxMs: parseInt(env.ACCOUNT_INIT_STAGGER_MAX_MS),
+  },
+  precapture: {
+    headersStartup: env.PRECAPTURE_HEADERS_STARTUP === 'true',
+    concurrency: parseInt(env.PRECAPTURE_HEADERS_CONCURRENCY),
+    staggerMinMs: parseInt(env.PRECAPTURE_HEADERS_STAGGER_MIN_MS),
+    staggerMaxMs: parseInt(env.PRECAPTURE_HEADERS_STAGGER_MAX_MS),
   },
 }
 

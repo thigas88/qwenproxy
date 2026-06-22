@@ -12,6 +12,7 @@ import { updateSessionParent } from '../services/qwen.js';
 import { getIncrementalDelta } from '../routes/chat.js';
 import { StreamingToolParser } from '../tools/parser.js';
 import type { FunctionToolDefinition } from '../tools/types.js';
+import { looksLikeUnwrappedToolCall, parseUnwrappedToolCalls } from '../routes/tool-handler.js';
 
 export interface QwenStreamDelta {
   phase: string;
@@ -203,7 +204,11 @@ export class QwenStreamParser {
    */
   flush(): { text: string; toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> } {
     if (this.toolParser) {
-      return this.toolParser.flush();
+      const flushed = this.toolParser.flush();
+      if (flushed.text && looksLikeUnwrappedToolCall(flushed.text)) {
+        return { text: '', toolCalls: [...flushed.toolCalls, ...parseUnwrappedToolCalls(flushed.text)] };
+      }
+      return flushed;
     }
     return { text: '', toolCalls: [] };
   }

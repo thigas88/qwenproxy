@@ -60,6 +60,11 @@ async function performKeepAlive(accountId: string, page: Page): Promise<void> {
 }
 
 export function startSessionKeeper(): void {
+  if (!config.sessionKeeper.enabled) {
+    console.log('[SessionKeeper] Disabled');
+    return;
+  }
+
   if (running) return;
   running = true;
 

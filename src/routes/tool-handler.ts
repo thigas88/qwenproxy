@@ -36,6 +36,13 @@ export function getForcedToolName(toolChoice: any): string {
   return '';
 }
 
+export function getToolChoiceMode(toolChoice: any): 'auto' | 'none' | 'required' | 'forced' {
+  if (toolChoice === 'none') return 'none';
+  if (toolChoice === 'required') return 'required';
+  if (toolChoice && typeof toolChoice === 'object' && toolChoice.function?.name) return 'forced';
+  return 'auto';
+}
+
 export function tokenizeForToolScoring(text: string): Set<string> {
   const tokens = new Set<string>();
   for (const token of text.toLowerCase().match(/[a-z0-9_./-]+/g) || []) {
@@ -141,7 +148,7 @@ export function buildToolCallContract(
   const names = tools.map(getToolName).filter(Boolean);
   const toolList = names.length > 0 ? names.join(', ') : 'none';
   const forcedLine = forcedToolName
-    ? `This turn strongly expects the tool "${forcedToolName}". If you call a tool, prefer this exact name.`
+    ? `You MUST call exactly the tool "${forcedToolName}" unless the user request is impossible or unsafe. Do not call any other tool first.`
     : 'Only call a tool when the user request requires an external action.';
   const parallelLine = parallelToolCalls
     ? 'You may emit multiple tool call blocks only when the user explicitly asks for multiple independent actions.'
@@ -161,7 +168,9 @@ Rules:
 3. Do not output raw JSON as a tool call.
 4. ${forcedLine}
 5. ${parallelLine}
-6. If no tool is needed, do not emit any tool call block.`;
+6. If no tool is needed, do not emit any tool call block.
+7. Put only valid JSON inside each <tool_call> block. No markdown fences, comments, or explanatory text inside the block.
+8. If you emit a tool call, stop after the closing </tool_call> tag and wait for the tool response.`;
 }
 
 export function parseToolArguments(value: unknown): Record<string, unknown> {

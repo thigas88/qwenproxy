@@ -1,8 +1,9 @@
-import { getQwenHeaders, getBasicHeaders, getGuestHeaders, getPageForAccount, browserFetch, browserStreamFetch, CHROME_CLIENT_HINTS } from './playwright.js';
+import { getQwenHeaders, getBasicHeaders, getGuestHeaders, getPageForAccount, browserFetch, browserStreamFetch } from './playwright.js';
 import { MAX_PAYLOAD_SIZE } from '../core/model-registry.js';
 import { config } from '../core/config.js';
 import { RetryableQwenStreamError, QwenUpstreamError, handleErrorBody, handleJsonErrorBody } from './error-handler.js';
 import { getWarmedChat, releaseWarmChat } from './warm-pool.js';
+import { getClientHintsHeaders } from './browser-manager.js';
 import crypto from 'crypto';
 
 const CACHED_TIMEZONE = new Date().toString().split(' (')[0];
@@ -10,6 +11,12 @@ const BASE_TIMEOUT_MS = 120000;
 const TIMEOUT_PER_MB = 30000;
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+function assertAntiBotHeaders(headers: Record<string, string>, label: string): void {
+  if (!headers['cookie'] || !headers['user-agent'] || !headers['bx-ua'] || !headers['bx-umidtoken'] || !headers['bx-v']) {
+    throw new Error(`${label} missing required browser anti-bot headers`);
+  }
+}
 
 export interface QwenMessage {
   fid: string;
@@ -144,14 +151,6 @@ function addIdleTimeoutToStream(
   });
 }
 
-function getClientHintsHeaders(): Record<string, string> {
-  return {
-    'sec-ch-ua': CHROME_CLIENT_HINTS,
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-  };
-}
-
 let cachedModels: any[] | null = null;
 let lastModelsFetch = 0;
 
@@ -205,7 +204,8 @@ export async function disableNativeTools(accountId?: string): Promise<void> {
         console.error(`[Qwen] Failed to disable native tools for ${cacheKey}: ${result.status} - ${result.body}`);
         return;
       } catch (err: any) {
-        console.warn('[Qwen] browserFetch failed for disableNativeTools, falling back:', err.message);
+        console.warn('[Qwen] browserFetch failed for disableNativeTools with active Qwen page:', err.message);
+        return;
       }
     }
 
@@ -268,7 +268,8 @@ export async function fetchQwenModels(accountId?: string): Promise<any[]> {
         return processModelsJson(JSON.parse(result.body));
       }
     } catch (err: any) {
-      console.warn('[Qwen] browserFetch failed for models, falling back:', err.message);
+      console.warn('[Qwen] browserFetch failed for models with active Qwen page:', err.message);
+      throw new Error(`Browser model fetch failed with active Qwen page: ${err.message}`, { cause: err });
     }
   }
 
@@ -287,7 +288,7 @@ export async function fetchQwenModels(accountId?: string): Promise<any[]> {
       'bx-umidtoken': bxUmidtoken || '',
       'timezone': CACHED_TIMEZONE,
       'source': 'web',
-      ...getClientHintsHeaders(),
+      ...getClientHintsHeaders(accountId),
     }
   });
 
@@ -369,6 +370,7 @@ export async function createQwenStream(
 
   if (accountId === 'guest') {
     chatHeaders = await getGuestHeaders();
+    assertAntiBotHeaders(chatHeaders, 'Guest session');
     const guestPage = getPageForAccount('guest');
     const guestBody = JSON.stringify({
       title: 'Guest Chat',
@@ -392,22 +394,12 @@ export async function createQwenStream(
         chatId = json.chat_id || json.id || json.data?.chat_id || json.data?.id;
         if (!chatId) throw new Error(`Unexpected guest chat response: ${JSON.stringify(json).slice(0, 200)}`);
       } catch (err: any) {
-        console.warn('[Qwen] browserFetch guest chat failed, falling back:', err.message);
-        const response = await fetch('https://chat.qwen.ai/api/v2/chats/new', {
-          method: 'POST',
-          headers: { 'accept': 'application/json, text/plain, */*', 'content-type': 'application/json', cookie: chatHeaders['cookie'], origin: 'https://chat.qwen.ai', referer: 'https://chat.qwen.ai/c/guest', 'user-agent': chatHeaders['user-agent'], 'x-request-id': crypto.randomUUID(), 'bx-v': chatHeaders['bx-v'], 'bx-ua': chatHeaders['bx-ua'], 'bx-umidtoken': chatHeaders['bx-umidtoken'], ...getClientHintsHeaders() },
-          body: guestBody,
-          signal: AbortSignal.timeout(config.timeouts.http),
-        });
-        if (!response.ok) { throw new Error(`Failed to create guest chat: ${response.status}`, { cause: err }); }
-        const json = await response.json();
-        chatId = json.chat_id || json.id || json.data?.chat_id || json.data?.id;
-        if (!chatId) { throw new Error(`Unexpected guest chat response: ${JSON.stringify(json).slice(0, 200)}`, { cause: err }); }
+        throw new Error(`Browser guest chat creation failed with active Qwen page: ${err.message}`, { cause: err });
       }
     } else {
       const response = await fetch('https://chat.qwen.ai/api/v2/chats/new', {
         method: 'POST',
-        headers: { 'accept': 'application/json, text/plain, */*', 'content-type': 'application/json', cookie: chatHeaders['cookie'], origin: 'https://chat.qwen.ai', referer: 'https://chat.qwen.ai/c/guest', 'user-agent': chatHeaders['user-agent'], 'x-request-id': crypto.randomUUID(), 'bx-v': chatHeaders['bx-v'], 'bx-ua': chatHeaders['bx-ua'], 'bx-umidtoken': chatHeaders['bx-umidtoken'], ...getClientHintsHeaders() },
+        headers: { 'accept': 'application/json, text/plain, */*', 'content-type': 'application/json', cookie: chatHeaders['cookie'], origin: 'https://chat.qwen.ai', referer: 'https://chat.qwen.ai/c/guest', 'user-agent': chatHeaders['user-agent'], 'x-request-id': crypto.randomUUID(), 'bx-v': chatHeaders['bx-v'], 'bx-ua': chatHeaders['bx-ua'], 'bx-umidtoken': chatHeaders['bx-umidtoken'], ...getClientHintsHeaders(accountId) },
         body: guestBody,
         signal: AbortSignal.timeout(config.timeouts.http),
       });
@@ -428,6 +420,7 @@ export async function createQwenStream(
     }
     chatId = leasedChat.chatId;
     chatHeaders = leasedChat.headers;
+    assertAntiBotHeaders(chatHeaders, 'Warm chat');
   }
 
   const actualParentId: string | null = null;
@@ -440,8 +433,8 @@ export async function createQwenStream(
       const uploadHeaders: Record<string, string> = {
         cookie: fullHeaders['cookie'] || chatHeaders['cookie'] || '',
         'user-agent': fullHeaders['user-agent'] || chatHeaders['user-agent'] || '',
-        'bx-ua': fullHeaders['bx-ua'] || '',
-        'bx-umidtoken': fullHeaders['bx-umidtoken'] || '',
+        'bx-ua': fullHeaders['bx-ua'],
+        'bx-umidtoken': fullHeaders['bx-umidtoken'],
         'bx-v': fullHeaders['bx-v'] || chatHeaders['bx-v'] || '',
       };
       if (!uploadHeaders['bx-ua']) {
@@ -449,10 +442,11 @@ export async function createQwenStream(
         const { headers: refreshedHeaders } = await getQwenHeaders(true, accountId);
         uploadHeaders['cookie'] = refreshedHeaders['cookie'] || uploadHeaders['cookie'];
         uploadHeaders['user-agent'] = refreshedHeaders['user-agent'] || uploadHeaders['user-agent'];
-        uploadHeaders['bx-ua'] = refreshedHeaders['bx-ua'] || '';
-        uploadHeaders['bx-umidtoken'] = refreshedHeaders['bx-umidtoken'] || '';
+        uploadHeaders['bx-ua'] = refreshedHeaders['bx-ua'];
+        uploadHeaders['bx-umidtoken'] = refreshedHeaders['bx-umidtoken'];
         uploadHeaders['bx-v'] = refreshedHeaders['bx-v'] || uploadHeaders['bx-v'];
       }
+      assertAntiBotHeaders(uploadHeaders, 'Multimodal upload');
       const results = await Promise.all(
         pendingMultimodal.map(parts => processImagesForQwen(parts, uploadHeaders))
       );
@@ -576,7 +570,7 @@ export async function createQwenStream(
       }
     } catch (browserErr: any) {
       if (browserErr instanceof QwenUpstreamError || browserErr instanceof RetryableQwenStreamError) throw browserErr;
-      console.warn('[Qwen] Browser stream fetch failed, falling back to Node.js:', browserErr.message);
+      throw new Error(`Browser stream fetch failed with active Qwen page: ${browserErr.message}`, { cause: browserErr });
     }
   }
 
@@ -599,9 +593,9 @@ export async function createQwenStream(
       'x-accel-buffering': 'no',
       'x-request-id': crypto.randomUUID(),
       'bx-v': chatHeaders['bx-v'],
-      'bx-ua': chatHeaders['bx-ua'] || '',
-      'bx-umidtoken': chatHeaders['bx-umidtoken'] || '',
-      ...getClientHintsHeaders(),
+      'bx-ua': chatHeaders['bx-ua'],
+      'bx-umidtoken': chatHeaders['bx-umidtoken'],
+      ...getClientHintsHeaders(accountId),
     },
     body: payloadJson,
     signal: controller.signal
@@ -609,6 +603,10 @@ export async function createQwenStream(
   clearTimeout(timeoutId);
 
   const responseContentType = response.headers.get('content-type') || '';
+  if (process.env.TEST_MOCK_PLAYWRIGHT && response.ok && response.body) {
+    return { stream: wrapLeasedStream(response.body, controller, timeoutMs, `Qwen stream ${chatId}`), headers: chatHeaders, uiSessionId: chatId, controller, accountId: accountId || 'guest' };
+  }
+
   if (response.ok && !responseContentType.includes('text/event-stream') && response.body) {
     const peekText = await response.clone().text().catch(() => '');
     if (peekText.includes('FAIL_SYS_USER_VALIDATE') || peekText.includes('_____tmd_____') || peekText.includes('RGV587_ERROR')) {
@@ -635,9 +633,9 @@ export async function createQwenStream(
             'x-accel-buffering': 'no',
             'x-request-id': crypto.randomUUID(),
             'bx-v': freshHeaders['bx-v'],
-            'bx-ua': freshHeaders['bx-ua'] || '',
-            'bx-umidtoken': freshHeaders['bx-umidtoken'] || '',
-            ...getClientHintsHeaders(),
+            'bx-ua': freshHeaders['bx-ua'],
+            'bx-umidtoken': freshHeaders['bx-umidtoken'],
+            ...getClientHintsHeaders(accountId),
           },
           body: payloadJson,
           signal: retryController.signal

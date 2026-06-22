@@ -53,6 +53,50 @@ function unescapeDoubleEscaped(content: string): string {
   return content;
 }
 
+function normalizeToolCallObject(parsed: any): any {
+  if (parsed?.type === 'function' && parsed.function) {
+    return {
+      id: parsed.id,
+      name: parsed.function.name,
+      arguments: parsed.function.arguments ?? parsed.arguments ?? {},
+      tool_call_id: parsed.tool_call_id,
+    };
+  }
+  return parsed;
+}
+
+function splitTopLevelJsonValues(input: string): string[] {
+  const values: string[] = [];
+  let start = -1;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+
+    if ((ch === '{' || ch === '[') && braceDepth === 0 && bracketDepth === 0) {
+      start = i;
+    }
+    if (ch === '{') braceDepth++;
+    if (ch === '}') braceDepth--;
+    if (ch === '[') bracketDepth++;
+    if (ch === ']') bracketDepth--;
+
+    if (start !== -1 && braceDepth === 0 && bracketDepth === 0 && (ch === '}' || ch === ']')) {
+      values.push(input.slice(start, i + 1));
+      start = -1;
+    }
+  }
+
+  return values;
+}
+
 function coerceParameterValue(rawValue: string): unknown {
   const value = decodeXmlEntities(rawValue.trim());
   if (value === 'true') return true;
@@ -399,7 +443,7 @@ export class StreamingToolParser {
     }
 
     // 3) Try JSON object format (single or multiple)
-    if (t.startsWith('{') || t.includes('"name"')) {
+    if (t.startsWith('{') || t.includes('"name"') || t.includes('tool_calls') || t.includes('function_call')) {
       const calls = this.parseToolContent(t);
       if (calls.length > 0) {
         for (const tc of calls) {
@@ -472,6 +516,19 @@ export class StreamingToolParser {
         if (tc) calls.push(tc);
       }
     } catch { /* ignore */ }
+
+    for (const part of splitTopLevelJsonValues(str)) {
+      try {
+        const parsed = robustParseJSON(part);
+        const items = Array.isArray(parsed) ? parsed : [parsed];
+        for (const item of items) {
+          const tc = this.parseToolCall(item);
+          if (tc && !calls.some(c => c.id === tc.id || (c.name === tc.name && JSON.stringify(c.arguments) === JSON.stringify(tc.arguments)))) {
+            calls.push(tc);
+          }
+        }
+      } catch { /* ignore */ }
+    }
     
     // Always try line-by-line parsing for multi-JSON content (independent of single parse)
     if (str.includes('\n')) {
@@ -493,14 +550,27 @@ export class StreamingToolParser {
   }
 
   private parseToolCall(parsed: any): ParsedToolCall | null {
+    parsed = normalizeToolCallObject(parsed);
     if (!parsed || typeof parsed !== 'object') return null;
+
+    if (Array.isArray(parsed.tool_calls)) {
+      return this.parseToolCall(parsed.tool_calls[0]);
+    }
+
+    if (parsed.function_call) {
+      parsed = {
+        id: parsed.id,
+        name: parsed.function_call.name,
+        arguments: parsed.function_call.arguments || {},
+      };
+    }
     
     const name = parsed.name || parsed.function?.name || parsed.tool_name || parsed.tool;
     if (!name || typeof name !== 'string' || name.length === 0) return null;
     
     let args = parsed.arguments || parsed.function?.arguments || parsed.args || parsed.parameters || parsed.input || {};
     if (typeof args === 'string') {
-      try { args = JSON.parse(args); }
+      try { args = robustParseJSON(args) || JSON.parse(args); }
       catch { args = {}; }
     }
     if (typeof args !== 'object' || args === null) args = {};

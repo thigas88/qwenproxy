@@ -47,7 +47,7 @@ export async function getCookies(accountId?: string): Promise<string> {
 }
 
 export async function getBasicHeaders(accountId?: string): Promise<{ cookie: string, userAgent: string, bxV: string, bxUa?: string, bxUmidtoken?: string }> {
-  if (process.env.TEST_MOCK_PLAYWRIGHT) return { cookie: 'token=mock', userAgent: 'mock', bxV: '2.5.36' };
+  if (process.env.TEST_MOCK_PLAYWRIGHT) return { cookie: 'token=mock', userAgent: 'mock', bxV: '2.5.36', bxUa: 'mock-bx-ua', bxUmidtoken: 'mock-bx-umidtoken' };
 
   let page = accountId ? accountPages.get(accountId) : getActivePage();
   if (accountId && !page) {
@@ -163,10 +163,8 @@ export async function getGuestHeaders(): Promise<Record<string, string>> {
           console.log('[Playwright] Guest: Request missing bx-ua, continuing route. Headers:', Object.keys(reqHeaders));
           await route.continue();
           if (request.url().includes('/api/v2/chat/completions')) {
-             console.warn('[Playwright] Guest: Completions request made without bx-ua. Resolving with available headers.');
-             setGuestHeadersCache({ headers: extractedHeaders, timestamp: Date.now() });
              await guestPage!.unroute('**/api/v2/chat/completions*', routeHandler);
-             resolve(extractedHeaders);
+             reject(new Error('Guest completions request was missing bx-ua; refusing to cache inconsistent anti-bot headers.'));
           }
         }
       };
@@ -214,7 +212,7 @@ export async function getQwenHeaders(forceNew = false, accountId?: string): Prom
   if (!forceNew && cache.cachedQwenHeaders) {
     const age = Date.now() - cache.lastHeadersTime;
     if (age < HEADERS_TTL) {
-      if (age > HEADERS_TTL * REFRESH_THRESHOLD && !cache.refreshInProgress) {
+      if (config.headers.backgroundRefresh && age > HEADERS_TTL * REFRESH_THRESHOLD && !cache.refreshInProgress) {
         cache.refreshInProgress = true;
         getQwenHeaders(true, accountId).catch((err) => {
           console.warn(`[Playwright] Background header refresh failed for ${cacheKey}:`, (err as Error).message);
@@ -307,7 +305,9 @@ async function _getQwenHeadersInternalOnce(forceNew = false, accountId?: string)
         'authorization': 'Bearer MOCK',
         'cookie': 'token=mock',
         'user-agent': 'mock',
-        'bx-v': '2.5.36'
+        'bx-v': '2.5.36',
+        'bx-ua': 'mock-bx-ua',
+        'bx-umidtoken': 'mock-bx-umidtoken'
       },
       chatSessionId: mockSessionId,
       parentMessageId: null
